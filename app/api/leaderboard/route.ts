@@ -27,28 +27,42 @@ export async function GET(req: Request) {
     const cacheKey = `${round}:${teamParam || ""}`;
     const cached = lbCache[cacheKey];
     const now = Date.now();
+
     if (cached && now - cached.timestamp < 2000) {
       const res = NextResponse.json({
         ...cached.data,
-        _timing: { totalMs: 0.1, dbMs: 0, appMs: 0.1, cached: true },
+        _timing: { totalMs: 0.1, connWaitMs: 0, sqlExecMs: 0, appMs: 0.1, cached: true },
       });
-      res.headers.set("Server-Timing", `db;dur=0;desc="cached", total;dur=0.1`);
+      res.headers.set("Server-Timing", `conn;dur=0, sql;dur=0, app;dur=0.1, total;dur=0.1;desc="cached"`);
+      res.headers.set("Cache-Control", "public, s-maxage=2, stale-while-revalidate=5");
       return res;
     }
 
-    const tDb0 = performance.now();
-    const data = await getPublicLeaderboard(round, teamParam);
-    const dbMs = performance.now() - tDb0;
+    const timedRes = await getPublicLeaderboard(round, teamParam);
+    const data = timedRes.data;
+    const connWaitMs = timedRes.connWaitMs;
+    const sqlExecMs = timedRes.sqlExecMs;
+
     const totalMs = performance.now() - t0;
-    const appMs = Math.max(0, totalMs - dbMs);
+    const appMs = Math.max(0, totalMs - (connWaitMs + sqlExecMs));
 
     lbCache[cacheKey] = { data, timestamp: now };
 
     const res = NextResponse.json({
       ...data,
-      _timing: { totalMs: Number(totalMs.toFixed(1)), dbMs: Number(dbMs.toFixed(1)), appMs: Number(appMs.toFixed(1)) },
+      _timing: {
+        totalMs: Number(totalMs.toFixed(1)),
+        connWaitMs: Number(connWaitMs.toFixed(1)),
+        sqlExecMs: Number(sqlExecMs.toFixed(1)),
+        appMs: Number(appMs.toFixed(1)),
+      },
     });
-    res.headers.set("Server-Timing", `db;dur=${dbMs.toFixed(1)}, app;dur=${appMs.toFixed(1)}, total;dur=${totalMs.toFixed(1)}`);
+
+    res.headers.set(
+      "Server-Timing",
+      `conn;dur=${connWaitMs.toFixed(1)}, sql;dur=${sqlExecMs.toFixed(1)}, app;dur=${appMs.toFixed(1)}, total;dur=${totalMs.toFixed(1)}`
+    );
+    res.headers.set("Cache-Control", "public, s-maxage=2, stale-while-revalidate=5");
     return res;
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "Internal error" }, { status: 500 });

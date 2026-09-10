@@ -16,18 +16,38 @@ async function req(url, opts = {}, timeoutMs = 15000) {
     const res = await fetch(url, { ...opts, signal: controller.signal });
     clearTimeout(timer);
     const text = await res.text();
-    const totalMs = performance.now() - t0;
-    const timingHdr = res.headers.get("Server-Timing");
-    let dbMs = null;
-    if (timingHdr) {
-      const m = timingHdr.match(/db;dur=([\d.]+)/);
-      if (m) dbMs = parseFloat(m[1]);
-    }
+    const clientTotalMs = performance.now() - t0;
+    const timingHdr = res.headers.get("Server-Timing") || "";
+
+    let connMs = null;
+    let sqlMs = null;
+    let appMs = null;
+    let serverTotalMs = null;
+
+    const mConn = timingHdr.match(/conn;dur=([\d.]+)/);
+    if (mConn) connMs = parseFloat(mConn[1]);
+
+    const mSql = timingHdr.match(/sql;dur=([\d.]+)/);
+    if (mSql) sqlMs = parseFloat(mSql[1]);
+
+    const mApp = timingHdr.match(/app;dur=([\d.]+)/);
+    if (mApp) appMs = parseFloat(mApp[1]);
+
+    const mTot = timingHdr.match(/total;dur=([\d.]+)/);
+    if (mTot) serverTotalMs = parseFloat(mTot[1]);
+
+    const netAndColdMs = serverTotalMs !== null ? Math.max(0, clientTotalMs - serverTotalMs) : null;
+
     return {
       status: res.status,
       ok: res.ok,
-      totalMs,
-      dbMs,
+      clientTotalMs,
+      serverTotalMs,
+      connMs,
+      sqlMs,
+      appMs,
+      netAndColdMs,
+      timingHdr,
       size: text.length,
     };
   } catch (err) {
@@ -35,8 +55,12 @@ async function req(url, opts = {}, timeoutMs = 15000) {
     return {
       status: 0,
       ok: false,
-      totalMs: performance.now() - t0,
-      dbMs: null,
+      clientTotalMs: performance.now() - t0,
+      serverTotalMs: null,
+      connMs: null,
+      sqlMs: null,
+      appMs: null,
+      netAndColdMs: null,
       error: err.message,
     };
   }
@@ -44,40 +68,42 @@ async function req(url, opts = {}, timeoutMs = 15000) {
 
 async function runProfiles() {
   console.log("============================================================");
-  console.log("LATENCY BENCHMARK: COLD vs WARM vs SEQUENTIAL vs CONCURRENT");
+  console.log("LATENCY & CONCURRENCY BENCHMARK (4-PART TIMING BREAKDOWN)");
   console.log("============================================================");
 
-  // Setup: Ensure GAUNTLET_T01 exists
+  // Setup: Ensure test team GAUNTLET_T01 exists
   await req(`${BASE}/api/game`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ team: "GAUNTLET_T01", start: true }),
   });
 
-  // 1. Cold Request (hit with cache-buster)
+  // 1. Cold Request
   console.log("\n--> 1. Testing COLD Request...");
   const coldRes = await req(`${BASE}/api/game/sync?team=GAUNTLET_T01&_cold=${Date.now()}`);
-  console.log(`    Status: ${coldRes.status} | Total: ${coldRes.totalMs.toFixed(1)} ms | DB: ${coldRes.dbMs} ms`);
+  console.log(`    Status: ${coldRes.status} | Client Total: ${coldRes.clientTotalMs.toFixed(1)} ms | Server: ${coldRes.serverTotalMs} ms [ConnWait: ${coldRes.connMs} ms | SqlExec: ${coldRes.sqlMs} ms | App: ${coldRes.appMs} ms | Net/ColdBoot: ${coldRes.netAndColdMs?.toFixed(1)} ms]`);
 
-  // 2. Warm Request (immediately after on the same route)
+  // 2. Warm Request
   console.log("\n--> 2. Testing WARM Request (immediate repeat)...");
   const warmRes = await req(`${BASE}/api/game/sync?team=GAUNTLET_T01`);
-  console.log(`    Status: ${warmRes.status} | Total: ${warmRes.totalMs.toFixed(1)} ms | DB: ${warmRes.dbMs} ms`);
+  console.log(`    Status: ${warmRes.status} | Client Total: ${warmRes.clientTotalMs.toFixed(1)} ms | Server: ${warmRes.serverTotalMs} ms [ConnWait: ${warmRes.connMs} ms | SqlExec: ${warmRes.sqlMs} ms | App: ${warmRes.appMs} ms | Net: ${warmRes.netAndColdMs?.toFixed(1)} ms]`);
 
   // 3. Second Request
   console.log("\n--> 3. Testing SECOND Request...");
   const secRes = await req(`${BASE}/api/game/sync?team=GAUNTLET_T01`);
-  console.log(`    Status: ${secRes.status} | Total: ${secRes.totalMs.toFixed(1)} ms | DB: ${secRes.dbMs} ms`);
+  console.log(`    Status: ${secRes.status} | Client Total: ${secRes.clientTotalMs.toFixed(1)} ms | Server: ${secRes.serverTotalMs} ms [ConnWait: ${secRes.connMs} ms | SqlExec: ${secRes.sqlMs} ms | App: ${secRes.appMs} ms]`);
 
   // 4. 10 Sequential Requests
   console.log("\n--> 4. Testing 10 SEQUENTIAL Requests...");
   const seqLatencies = [];
-  const seqDbLatencies = [];
+  const seqConn = [];
+  const seqSql = [];
   for (let i = 1; i <= 10; i++) {
     const r = await req(`${BASE}/api/game/sync?team=GAUNTLET_T01`);
-    seqLatencies.push(r.totalMs);
-    if (r.dbMs != null) seqDbLatencies.push(r.dbMs);
-    process.stdout.write(`    [#${i}] ${r.totalMs.toFixed(0)}ms (db: ${r.dbMs}ms) | `);
+    seqLatencies.push(r.clientTotalMs);
+    if (r.connMs !== null) seqConn.push(r.connMs);
+    if (r.sqlMs !== null) seqSql.push(r.sqlMs);
+    process.stdout.write(`    [#${i}] ${r.clientTotalMs.toFixed(0)}ms (sql: ${r.sqlMs}ms, conn: ${r.connMs}ms) | `);
     if (i % 5 === 0) console.log("");
   }
   const seqAvg = seqLatencies.reduce((a, b) => a + b, 0) / seqLatencies.length;
@@ -93,7 +119,7 @@ async function runProfiles() {
   const promises = [];
   for (let i = 1; i <= 90; i++) {
     const teamNum = String(((i - 1) % 70) + 1).padStart(2, "0");
-    // Mix of endpoints: 60 sync, 20 leaderboard, 10 game GET
+    // Mix: 60 sync, 20 leaderboard, 10 game GET
     let url = `${BASE}/api/game/sync?team=GAUNTLET_T${teamNum}`;
     if (i % 4 === 0) url = `${BASE}/api/leaderboard?round=1`;
     else if (i % 9 === 0) url = `${BASE}/api/game?team=GAUNTLET_T${teamNum}`;
@@ -101,27 +127,34 @@ async function runProfiles() {
   }
 
   const concurrentResults = await Promise.all(promises);
-  const concLatencies = concurrentResults.map((r) => r.totalMs);
-  const concDbLatencies = concurrentResults.map((r) => r.dbMs).filter((x) => x !== null);
+  const concLatencies = concurrentResults.map((r) => r.clientTotalMs);
+  const concConn = concurrentResults.map((r) => r.connMs).filter((x) => x !== null);
+  const concSql = concurrentResults.map((r) => r.sqlMs).filter((x) => x !== null);
+  const concCold = concurrentResults.map((r) => r.netAndColdMs).filter((x) => x !== null);
   const failed = concurrentResults.filter((r) => !r.ok);
 
   console.log(`    90 Concurrent Requests Results:`);
   console.log(`      Total requests: ${concurrentResults.length}`);
   console.log(`      Successful: ${concurrentResults.length - failed.length}`);
-  console.log(`      Failed: ${failed.length}`);
-  console.log(`      Min: ${Math.min(...concLatencies).toFixed(1)} ms`);
-  console.log(`      Max: ${Math.max(...concLatencies).toFixed(1)} ms`);
-  console.log(`      p50: ${pct(concLatencies, 50).toFixed(1)} ms`);
-  console.log(`      p95: ${pct(concLatencies, 95).toFixed(1)} ms`);
-  console.log(`      p99: ${pct(concLatencies, 99).toFixed(1)} ms`);
+  console.log(`      Failed / Timed out (>15s): ${failed.length}`);
+  console.log(`      Min Client Latency: ${Math.min(...concLatencies).toFixed(1)} ms`);
+  console.log(`      Max Client Latency: ${Math.max(...concLatencies).toFixed(1)} ms`);
+  console.log(`      p50 Client Latency: ${pct(concLatencies, 50).toFixed(1)} ms`);
+  console.log(`      p95 Client Latency: ${pct(concLatencies, 95).toFixed(1)} ms`);
+  console.log(`      p99 Client Latency: ${pct(concLatencies, 99).toFixed(1)} ms`);
 
-  if (concDbLatencies.length > 0) {
-    console.log(`    DB Query Durations:`);
-    console.log(`      DB Min: ${Math.min(...concDbLatencies).toFixed(1)} ms`);
-    console.log(`      DB Max: ${Math.max(...concDbLatencies).toFixed(1)} ms`);
-    console.log(`      DB p50: ${pct(concDbLatencies, 50).toFixed(1)} ms`);
-    console.log(`      DB p95: ${pct(concDbLatencies, 95).toFixed(1)} ms`);
-    console.log(`      DB p99: ${pct(concDbLatencies, 99).toFixed(1)} ms`);
+  console.log(`\n    Detailed 4-Part Component Breakdown for 90 Concurrent Requests:`);
+  if (concConn.length > 0) {
+    console.log(`      Connection Wait (PgBouncer queueing):`);
+    console.log(`        p50: ${pct(concConn, 50).toFixed(1)} ms | p95: ${pct(concConn, 95).toFixed(1)} ms | Max: ${Math.max(...concConn).toFixed(1)} ms`);
+  }
+  if (concSql.length > 0) {
+    console.log(`      Actual PostgreSQL Query Execution:`);
+    console.log(`        p50: ${pct(concSql, 50).toFixed(1)} ms | p95: ${pct(concSql, 95).toFixed(1)} ms | Max: ${Math.max(...concSql).toFixed(1)} ms`);
+  }
+  if (concCold.length > 0) {
+    console.log(`      Network RTT + Vercel Container Cold Boot:`);
+    console.log(`        p50: ${pct(concCold, 50).toFixed(1)} ms | p95: ${pct(concCold, 95).toFixed(1)} ms`);
   }
 }
 

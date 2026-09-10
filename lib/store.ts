@@ -1,7 +1,8 @@
-﻿import getSql from "./db";
+﻿import getSql, { timedQuery, type TimedResult } from "./db";
 import {
   getEventConfig,
   calculateActiveRound,
+  calculateSchedule,
   getOfficialRoundStartTime,
   ROUND_DURATION_SEC,
 } from "./eventClock";
@@ -25,7 +26,7 @@ export type RoundState = {
   masterKeyAt: number | null;
   status: "active" | "complete" | "timeup";
   elapsedMs: number | null;
-  elapsedSec: number | null; // For legacy backwards compatibility
+  elapsedSec: number | null;
 };
 
 export type TeamState = {
@@ -39,7 +40,6 @@ export type TeamState = {
     2: RoundState;
     3: RoundState;
   };
-  // Convenience properties mirroring active round for backwards compatibility
   round: number;
   doors: DoorState[];
   masterKey: boolean;
@@ -93,86 +93,114 @@ function syncLegacyFields(t: TeamState, activeRound: 1 | 2 | 3 = 1) {
 }
 
 /**
- * High-performance single SQL query fetching team sync data.
- * Used by /api/game/sync to avoid multi-query chains and connection pool starvation.
+ * UNIFIED SYNC QUERY: Fetches event clock, active round, team status, round summaries,
+ * and door states in EXACTLY ONE SQL statement.
+ * Eliminates connection contention and multiple network round-trips.
  */
-export async function getTeamSyncData(name: string, activeRound: 1 | 2 | 3 = 1) {
+export async function getFullSyncData(name: string, now = Date.now()) {
   const key = norm(name);
   if (!key) return null;
-  const sql = getSql();
 
-  const [row] = await sql<Array<{
-    team_name: string;
-    rounds: Array<{ round_number: number; status: string; elapsed_ms: string | number | null; master_key: boolean }>;
-    doors: Array<{ door_number: number; index_in_round: number; solved: boolean; fragment: string; attempts: number }>;
-  }>>`
-    SELECT 
-      t.team_name,
-      (
-        SELECT COALESCE(json_agg(json_build_object(
-          'round_number', rs.round_number,
-          'status', rs.status,
-          'master_key', rs.master_key,
-          'elapsed_ms', rs.elapsed_ms
-        ) ORDER BY rs.round_number ASC), '[]'::json)
-        FROM round_states rs
-        WHERE rs.team_name = t.team_name
-      ) as rounds,
-      (
-        SELECT COALESCE(json_agg(json_build_object(
-          'door_number', ds.door_number,
-          'index_in_round', ds.index_in_round,
-          'solved', ds.solved,
-          'fragment', ds.fragment,
-          'attempts', ds.attempts
-        ) ORDER BY ds.door_number ASC), '[]'::json)
-        FROM door_states ds
-        WHERE ds.team_name = t.team_name AND ds.round_number = ${activeRound}
-      ) as doors
-    FROM teams t
-    WHERE t.team_name = ${key}
-    LIMIT 1;
-  `;
+  return timedQuery(async (sql) => {
+    const [row] = await sql<Array<{
+      team_name: string;
+      event_start_time: string | number;
+      event_status: string;
+      round_duration_sec: number;
+      total_rounds: number;
+      rounds: Array<{ round_number: number; status: string; elapsed_ms: string | number | null; master_key: boolean }>;
+      doors: Array<{ door_number: number; index_in_round: number; round_number: number; solved: boolean; fragment: string; attempts: number }>;
+    }>>`
+      SELECT 
+        t.team_name,
+        e.event_start_time,
+        e.event_status,
+        e.round_duration_sec,
+        e.total_rounds,
+        (
+          SELECT COALESCE(json_agg(json_build_object(
+            'round_number', rs.round_number,
+            'status', rs.status,
+            'master_key', rs.master_key,
+            'elapsed_ms', rs.elapsed_ms
+          ) ORDER BY rs.round_number ASC), '[]'::json)
+          FROM round_states rs
+          WHERE rs.team_name = t.team_name
+        ) as rounds,
+        (
+          SELECT COALESCE(json_agg(json_build_object(
+            'door_number', ds.door_number,
+            'round_number', ds.round_number,
+            'index_in_round', ds.index_in_round,
+            'solved', ds.solved,
+            'fragment', ds.fragment,
+            'attempts', ds.attempts
+          ) ORDER BY ds.door_number ASC), '[]'::json)
+          FROM door_states ds
+          WHERE ds.team_name = t.team_name
+        ) as doors
+      FROM teams t
+      CROSS JOIN (
+        SELECT event_start_time, event_status, round_duration_sec, total_rounds 
+        FROM events 
+        WHERE id = 'default' 
+        LIMIT 1
+      ) e
+      WHERE t.team_name = ${key}
+      LIMIT 1;
+    `;
 
-  if (!row) return null;
+    if (!row) return null;
 
-  const roundsList = row.rounds || [];
-  const curRound = roundsList.find((r) => r.round_number === activeRound);
-  const r1 = roundsList.find((r) => r.round_number === 1);
-  const r2 = roundsList.find((r) => r.round_number === 2);
-  const r3 = roundsList.find((r) => r.round_number === 3);
+    const eventStartTime = Number(row.event_start_time);
+    const eventStatus = (row.event_status as any) || "active";
+    const schedule = calculateSchedule(eventStartTime, now, eventStatus);
+    const activeRound = schedule.activeRound || 1;
 
-  const fmtSummary = (r?: { status: string; elapsed_ms: string | number | null }) => {
-    if (!r) return { status: "active", elapsedMs: null, elapsedSec: null };
-    const ms = r.elapsed_ms ? Number(r.elapsed_ms) : null;
-    return {
-      status: r.status || "active",
-      elapsedMs: ms,
-      elapsedSec: ms ? Math.floor(ms / 1000) : null,
+    const roundsList = row.rounds || [];
+    const curRound = roundsList.find((r) => r.round_number === activeRound);
+    const r1 = roundsList.find((r) => r.round_number === 1);
+    const r2 = roundsList.find((r) => r.round_number === 2);
+    const r3 = roundsList.find((r) => r.round_number === 3);
+
+    const fmtSummary = (r?: { status: string; elapsed_ms: string | number | null }) => {
+      if (!r) return { status: "active", elapsedMs: null, elapsedSec: null };
+      const ms = r.elapsed_ms ? Number(r.elapsed_ms) : null;
+      return {
+        status: r.status || "active",
+        elapsedMs: ms,
+        elapsedSec: ms ? Math.floor(ms / 1000) : null,
+      };
     };
-  };
 
-  return {
-    team: row.team_name,
-    currentRound: activeRound,
-    doors: (row.doors || []).map((d) => ({
-      solved: d.solved,
-      fragment: d.solved ? (d.fragment || "") : "",
-      attempts: d.attempts || 0,
-    })),
-    masterKey: curRound ? curRound.master_key : false,
-    status: curRound ? curRound.status : "active",
-    roundsSummary: {
-      1: fmtSummary(r1),
-      2: fmtSummary(r2),
-      3: fmtSummary(r3),
-    },
-  };
+    const activeDoors = (row.doors || [])
+      .filter((d) => d.round_number === activeRound)
+      .map((d) => ({
+        solved: d.solved,
+        fragment: d.solved ? (d.fragment || "") : "",
+        attempts: d.attempts || 0,
+      }));
+
+    return {
+      schedule,
+      team: {
+        team: row.team_name,
+        currentRound: activeRound,
+        doors: activeDoors,
+        masterKey: curRound ? curRound.master_key : false,
+        status: curRound ? curRound.status : "active",
+        roundsSummary: {
+          1: fmtSummary(r1),
+          2: fmtSummary(r2),
+          3: fmtSummary(r3),
+        },
+      },
+    };
+  });
 }
 
 /**
- * Get full team state by name from PostgreSQL.
- * Optimized to a single consolidated SQL query to prevent connection pooling deadlocks.
+ * Get full team state by name from PostgreSQL in a single SQL query.
  */
 export async function getTeam(name: string): Promise<TeamState | null> {
   const key = norm(name);
@@ -305,7 +333,6 @@ export async function getTeam(name: string): Promise<TeamState | null> {
 
 /**
  * Find or create a team and initialize all rounds and doors in PostgreSQL.
- * HIGH-CONCURRENCY BATCHED: Multi-row inserts reduce round-trips to just 3 statements.
  */
 export async function getOrCreateTeam(name: string): Promise<{ team: TeamState; created: boolean }> {
   const key = norm(name);
@@ -419,7 +446,6 @@ export async function listTeams(): Promise<TeamState[]> {
 
 /**
  * Mark a door solved in PostgreSQL and record earned fragment.
- * Idempotent: safe against duplicate requests.
  */
 export async function solveDoor(
   name: string,
@@ -485,7 +511,7 @@ export async function recordAttempt(name: string, doorNumber: number): Promise<T
 }
 
 /**
- * Start a round for a team. Sets started_at if not already set.
+ * Start a round for a team.
  */
 export async function startRound(name: string, roundArg?: number): Promise<TeamState | null> {
   const key = norm(name);
@@ -514,8 +540,6 @@ export async function startRound(name: string, roundArg?: number): Promise<TeamS
 
 /**
  * Record Master Key submission in PostgreSQL.
- * If accepted=true, calculates deterministic elapsed_ms with millisecond precision
- * relative to the official round start time.
  */
 export async function setMasterKey(
   name: string,
@@ -595,109 +619,112 @@ export async function setRoundStatus(
 /**
  * Fetch public leaderboard from PostgreSQL.
  * HIGH PERFORMANCE INDEX SCAN: Uses idx_round_states_leaderboard directly with zero table joins.
- * Returns TOP 10 + totalCount via window function in 1 query.
+ * Measures exact connection wait time and SQL execution time.
  */
-export async function getPublicLeaderboard(round: 1 | 2 | 3, currentTeamName?: string) {
-  const sql = getSql();
+export async function getPublicLeaderboard(
+  round: 1 | 2 | 3,
+  currentTeamName?: string
+): Promise<TimedResult<{ round: 1 | 2 | 3; top10: LeaderboardEntry[]; currentTeam: LeaderboardEntry | null; totalCompleted: number }>> {
+  return timedQuery(async (sql) => {
+    const rows = await sql<Array<{
+      team: string;
+      round: number;
+      elapsedMs: string | number;
+      finishedAt: string | number;
+      masterKeyAttempts: number;
+      totalCount: string | number;
+    }>>`
+      SELECT 
+        rs.team_name as team,
+        rs.round_number as round,
+        rs.elapsed_ms as "elapsedMs",
+        rs.finished_at as "finishedAt",
+        rs.master_key_attempts as "masterKeyAttempts",
+        COUNT(*) OVER() as "totalCount"
+      FROM round_states rs
+      WHERE rs.round_number = ${round} AND rs.status = 'complete' AND rs.elapsed_ms IS NOT NULL
+      ORDER BY rs.elapsed_ms ASC, rs.finished_at ASC, rs.master_key_attempts ASC
+      LIMIT 10
+    `;
 
-  const rows = await sql<Array<{
-    team: string;
-    round: number;
-    elapsedMs: string | number;
-    finishedAt: string | number;
-    masterKeyAttempts: number;
-    totalCount: string | number;
-  }>>`
-    SELECT 
-      rs.team_name as team,
-      rs.round_number as round,
-      rs.elapsed_ms as "elapsedMs",
-      rs.finished_at as "finishedAt",
-      rs.master_key_attempts as "masterKeyAttempts",
-      COUNT(*) OVER() as "totalCount"
-    FROM round_states rs
-    WHERE rs.round_number = ${round} AND rs.status = 'complete' AND rs.elapsed_ms IS NOT NULL
-    ORDER BY rs.elapsed_ms ASC, rs.finished_at ASC, rs.master_key_attempts ASC
-    LIMIT 10
-  `;
+    const top10: LeaderboardEntry[] = rows.map((r, idx) => {
+      const ms = Number(r.elapsedMs);
+      return {
+        rank: idx + 1,
+        team: r.team,
+        round: r.round as 1 | 2 | 3,
+        elapsedMs: ms,
+        elapsedSec: Math.floor(ms / 1000),
+        formattedTime: fmtMs(ms),
+        finishedAt: Number(r.finishedAt),
+        solvedDoors: 6,
+        totalAttempts: 6,
+        masterKeyAttempts: r.masterKeyAttempts,
+      };
+    });
 
-  const top10: LeaderboardEntry[] = rows.map((r, idx) => {
-    const ms = Number(r.elapsedMs);
-    return {
-      rank: idx + 1,
-      team: r.team,
-      round: r.round as 1 | 2 | 3,
-      elapsedMs: ms,
-      elapsedSec: Math.floor(ms / 1000),
-      formattedTime: fmtMs(ms),
-      finishedAt: Number(r.finishedAt),
-      solvedDoors: 6, // In gauntlet rules, round completion requires all 6 doors solved
-      totalAttempts: 6,
-      masterKeyAttempts: r.masterKeyAttempts,
-    };
-  });
+    const totalCompleted = rows.length > 0 ? Number(rows[0].totalCount) : 0;
+    let currentTeamEntry: LeaderboardEntry | null = null;
 
-  const totalCompleted = rows.length > 0 ? Number(rows[0].totalCount) : 0;
-  let currentTeamEntry: LeaderboardEntry | null = null;
-
-  if (currentTeamName) {
-    const key = norm(currentTeamName);
-    const inTop10 = top10.find((e) => norm(e.team) === key);
-    if (inTop10) {
-      currentTeamEntry = inTop10;
-    } else {
-      const [teamRow] = await sql<Array<{
-        team: string;
-        round: number;
-        elapsedMs: string | number;
-        finishedAt: string | number;
-        masterKeyAttempts: number;
-      }>>`
-        SELECT 
-          rs.team_name as team,
-          rs.round_number as round,
-          rs.elapsed_ms as "elapsedMs",
-          rs.finished_at as "finishedAt",
-          rs.master_key_attempts as "masterKeyAttempts"
-        FROM round_states rs
-        WHERE rs.team_name = ${key} AND rs.round_number = ${round} AND rs.status = 'complete' AND rs.elapsed_ms IS NOT NULL
-        LIMIT 1
-      `;
-
-      if (teamRow) {
-        const ms = Number(teamRow.elapsedMs);
-        const finAt = Number(teamRow.finishedAt);
-        const [rankRow] = await sql<Array<{ rank: string | number }>>`
-          SELECT COUNT(*) + 1 as rank
-          FROM round_states
-          WHERE round_number = ${round} 
-            AND status = 'complete' 
-            AND elapsed_ms IS NOT NULL
-            AND (elapsed_ms < ${ms} OR (elapsed_ms = ${ms} AND finished_at < ${finAt}))
+    if (currentTeamName) {
+      const key = norm(currentTeamName);
+      const inTop10 = top10.find((e) => norm(e.team) === key);
+      if (inTop10) {
+        currentTeamEntry = inTop10;
+      } else {
+        const [teamRow] = await sql<Array<{
+          team: string;
+          round: number;
+          elapsedMs: string | number;
+          finishedAt: string | number;
+          masterKeyAttempts: number;
+        }>>`
+          SELECT 
+            rs.team_name as team,
+            rs.round_number as round,
+            rs.elapsed_ms as "elapsedMs",
+            rs.finished_at as "finishedAt",
+            rs.master_key_attempts as "masterKeyAttempts"
+          FROM round_states rs
+          WHERE rs.team_name = ${key} AND rs.round_number = ${round} AND rs.status = 'complete' AND rs.elapsed_ms IS NOT NULL
+          LIMIT 1
         `;
 
-        currentTeamEntry = {
-          rank: Number(rankRow.rank),
-          team: teamRow.team,
-          round: round,
-          elapsedMs: ms,
-          elapsedSec: Math.floor(ms / 1000),
-          formattedTime: fmtMs(ms),
-          finishedAt: finAt,
-          solvedDoors: 6,
-          totalAttempts: 6,
-          masterKeyAttempts: teamRow.masterKeyAttempts,
-        };
+        if (teamRow) {
+          const ms = Number(teamRow.elapsedMs);
+          const finAt = Number(teamRow.finishedAt);
+          const [rankRow] = await sql<Array<{ rank: string | number }>>`
+            SELECT COUNT(*) + 1 as rank
+            FROM round_states
+            WHERE round_number = ${round} 
+              AND status = 'complete' 
+              AND elapsed_ms IS NOT NULL
+              AND (elapsed_ms < ${ms} OR (elapsed_ms = ${ms} AND finished_at < ${finAt}))
+          `;
+
+          currentTeamEntry = {
+            rank: Number(rankRow.rank),
+            team: teamRow.team,
+            round: round,
+            elapsedMs: ms,
+            elapsedSec: Math.floor(ms / 1000),
+            formattedTime: fmtMs(ms),
+            finishedAt: finAt,
+            solvedDoors: 6,
+            totalAttempts: 6,
+            masterKeyAttempts: teamRow.masterKeyAttempts,
+          };
+        }
       }
     }
-  }
 
-  return {
-    round,
-    top10,
-    currentTeam: currentTeamEntry,
-    totalCompleted,
-  };
+    return {
+      round,
+      top10,
+      currentTeam: currentTeamEntry,
+      totalCompleted,
+    };
+  });
 }
 
 /**
