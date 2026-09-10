@@ -1,0 +1,201 @@
+═══════════════════════════════════════════════════════════════
+THE CODEBREAKER'S GAUNTLET — ALL 18 QUESTIONS & ANSWERS
+═══════════════════════════════════════════════════════════════
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ROUND 01 — THE PERIMETER BREACH
+Difficulty: EASY
+Master Key Sequence: SUN - MARS - FIB - 42 - 16 - HLT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DOOR 01 — GENERAL KNOWLEDGE
+Title: SOLAR NAVIGATOR
+Question: Identify the body that dominates the center of our
+solar system — the primary gravitational anchor around which
+everything else orbits.
+Hint: It rises in the east every morning — not a planet.
+Answer: SUN
+Fragment: SUN
+
+DOOR 02 — GENERAL KNOWLEDGE
+Title: THE RED ROCK
+Question: This fourth planet from the Sun is known for its
+iron-rich, reddish surface. Often called the "Red Planet."
+Hint: Named after the Roman god of war.
+Answer: MARS
+Fragment: MARS
+
+DOOR 03 — PATTERN RECOGNITION
+Title: FIBONACCI SEQUENCE
+Question: Predict the next term:
+1, 1, 2, 3, 5, 8, ???
+Hint: Each number is the sum of the two before it.
+Answer: 13
+Fragment: FIB
+
+DOOR 04 — PATTERN RECOGNITION
+Title: TRIANGULAR SERIES
+Question: Predict the next term:
+2, 6, 12, 20, 30, ???
+Hint: n × (n+1). Term 6: 6 × 7 = ??
+Answer: 42
+Fragment: 42
+
+DOOR 05 — CODE READING
+Title: VARIABLE TRACE
+Question: Trace the variables and read the output:
+  x = 5
+  x = x + 3
+  x = x * 2
+  print(x)
+Hint: 5 + 3 = 8, then 8 × 2 = ??
+Answer: 16
+Fragment: 16
+
+DOOR 06 — CODE READING
+Title: THE GREETING FUNCTION
+Question: Determine what this prints:
+  def greet(name):
+      return "HELLO " + name
+  print(greet("TEAM"))
+Hint: "HELLO " + "TEAM" — don't forget the space.
+Answer: HELLO TEAM
+Fragment: HLT
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ROUND 02 — THE CORE INFILTRATION
+Difficulty: MEDIUM
+Master Key Sequence: PAN - GRV - SQ7 - BIN - SUM - REV
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DOOR 07 — GENERAL KNOWLEDGE
+Title: CONTINENTAL DRIFT
+Question: Before the continents drifted apart, all landmasses
+were joined in a single supercontinent. What was it called?
+Hint: Sounds like "pan-GIA."
+Answer: PANGEA
+Fragment: PAN
+
+DOOR 08 — GENERAL KNOWLEDGE
+Title: THE INVISIBLE FORCE
+Question: This fundamental force keeps your feet on the ground
+and planets in orbit. It is the weakest of the four forces
+but has infinite range.
+Hint: The force that makes things fall — Newton saw an apple.
+Answer: GRAVITY
+Fragment: GRV
+
+DOOR 09 — PATTERN RECOGNITION
+Title: SQUARE ROOT SEQUENCE
+Question: What is the square root of 49?
+Hint: 7 × 7 = 49
+Answer: 7
+Fragment: SQ7
+
+DOOR 10 — PATTERN RECOGNITION
+Title: THE BINARY CODE
+Question: Convert the decimal number 10 to binary.
+Hint: 8 + 2 = 10. Binary uses powers of 2.
+Answer: 1010
+Fragment: BIN
+
+DOOR 11 — CODE READING
+Title: THE LOOP COUNTER
+Question: What is the final value of sum?
+  sum = 0
+  for i in range(1, 11):
+      sum += i
+  print(sum)
+Hint: Sum of 1 through 10. n(n+1)/2 = 10×11/2.
+Answer: 55
+Fragment: SUM
+
+DOOR 12 — CODE READING
+Title: THE ARRAY REVERSE
+Question: What does this print?
+  word = "HELLO"
+  print(word[::-1])
+Hint: Python slice [::-1] reverses a string.
+Answer: OLLEH
+Fragment: REV
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ROUND 03 — THE FINAL PROTOCOL
+Difficulty: HARD
+Master Key Sequence: DNL - SOL - PRM - PHI - FAC - KVL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DOOR 13 — GENERAL KNOWLEDGE
+Title: THE DNA SPIRAL
+Question: DNA is shaped like a twisted ladder. What is the
+scientific name for this spiral structure?
+Hint: Greek word meaning "twisted."
+Answer: HELIX
+Fragment: DNL
+
+DOOR 14 — GENERAL KNOWLEDGE
+Title: SPEED OF LIGHT
+Question: What is the speed of light in km/s, rounded to the
+nearest whole number? It starts with 299...
+Hint: 299,792 km/s — the universal speed limit.
+Answer: 299792
+Fragment: SOL
+
+DOOR 15 — PATTERN RECOGNITION
+Title: THE PRIME SEQUENCE
+Question: What is the next prime number after 89?
+Hint: 90 is even, 91 = 7×13, 92 is even, 93 = 3×31...
+Answer: 97
+Fragment: PRM
+
+DOOR 16 — PATTERN RECOGNITION
+Title: THE GOLDEN RATIO
+Question: The golden ratio (φ) ≈ 1.618... Multiply by 1000
+and round to the nearest whole number.
+Hint: φ × 1000 = ??
+Answer: 1618
+Fragment: PHI
+
+DOOR 17 — CODE READING
+Title: THE RECURSIVE FUNCTION
+Question: What is the output?
+  def factorial(n):
+      if n <= 1: return 1
+      return n * factorial(n - 1)
+  print(factorial(5))
+Hint: 5! = 5 × 4 × 3 × 2 × 1
+Answer: 120
+Fragment: FAC
+
+DOOR 18 — CODE READING
+Title: THE HASH MAP
+Question: In a hash map, data is stored as pairs of a unique
+identifier and its associated data. What is this called?
+Hint: Every entry has a unique _____ and a corresponding _____.
+Answer: KEY-VALUE
+Fragment: KVL
+
+
+═══════════════════════════════════════════════════════════════
+MASTER KEY SEQUENCES (for assembly)
+═══════════════════════════════════════════════════════════════
+
+Round 01: SUN - MARS - FIB - 42 - 16 - HLT
+Round 02: PAN - GRV - SQ7 - BIN - SUM - REV
+Round 03: DNL - SOL - PRM - PHI - FAC - KVL
+
+
+═══════════════════════════════════════════════════════════════
+DISTRIBUTION PER ROUND
+═══════════════════════════════════════════════════════════════
+
+Doors 01, 04 → GENERAL KNOWLEDGE
+Doors 02, 05 → PATTERN / LOGIC
+Doors 03, 06 → CODE / PROGRAMMING
+
+Round 01: All EASY
+Round 02: All MEDIUM
+Round 03: All HARD
