@@ -94,7 +94,6 @@ function syncLegacyFields(t: TeamState, activeRound: 1 | 2 | 3 = 1) {
 
 /**
  * Get team by name from PostgreSQL.
- * Optimized with parallel queries to reduce database latency.
  */
 export async function getTeam(name: string): Promise<TeamState | null> {
   const key = norm(name);
@@ -117,38 +116,36 @@ export async function getTeam(name: string): Promise<TeamState | null> {
 
   if (!teamRow) return null;
 
-  const [roundRows, doorRows, config] = await Promise.all([
-    sql<Array<{
-      round_number: number;
-      status: string;
-      started_at: string | number | null;
-      finished_at: string | number | null;
-      master_key_at: string | number | null;
-      master_key: boolean;
-      master_key_attempts: number;
-      elapsed_ms: string | number | null;
-    }>>`
-      SELECT round_number, status, started_at, finished_at, master_key_at, master_key, master_key_attempts, elapsed_ms
-      FROM round_states
-      WHERE team_name = ${key}
-      ORDER BY round_number ASC
-    `,
-    sql<Array<{
-      door_number: number;
-      round_number: number;
-      index_in_round: number;
-      solved: boolean;
-      fragment: string;
-      attempts: number;
-      solved_at: string | number | null;
-    }>>`
-      SELECT door_number, round_number, index_in_round, solved, fragment, attempts, solved_at
-      FROM door_states
-      WHERE team_name = ${key}
-      ORDER BY door_number ASC
-    `,
-    getEventConfig()
-  ]);
+  const roundRows = await sql<Array<{
+    round_number: number;
+    status: string;
+    started_at: string | number | null;
+    finished_at: string | number | null;
+    master_key_at: string | number | null;
+    master_key: boolean;
+    master_key_attempts: number;
+    elapsed_ms: string | number | null;
+  }>>`
+    SELECT round_number, status, started_at, finished_at, master_key_at, master_key, master_key_attempts, elapsed_ms
+    FROM round_states
+    WHERE team_name = ${key}
+    ORDER BY round_number ASC
+  `;
+
+  const doorRows = await sql<Array<{
+    door_number: number;
+    round_number: number;
+    index_in_round: number;
+    solved: boolean;
+    fragment: string;
+    attempts: number;
+    solved_at: string | number | null;
+  }>>`
+    SELECT door_number, round_number, index_in_round, solved, fragment, attempts, solved_at
+    FROM door_states
+    WHERE team_name = ${key}
+    ORDER BY door_number ASC
+  `;
 
   const doorsByRound: Record<number, DoorState[]> = { 1: [], 2: [], 3: [] };
   for (const d of doorRows) {
@@ -182,7 +179,8 @@ export async function getTeam(name: string): Promise<TeamState | null> {
     };
   }
 
-  const activeRound = (calculateActiveRound(config.eventStartTime) || 1) as 1 | 2 | 3;
+  const { eventStartTime } = await getEventConfig();
+  const activeRound = (calculateActiveRound(eventStartTime) || 1) as 1 | 2 | 3;
 
   const teamObj: TeamState = {
     team: teamRow.team_name,
@@ -207,7 +205,7 @@ export async function getTeam(name: string): Promise<TeamState | null> {
 
 /**
  * Find or create a team and initialize all rounds and doors in PostgreSQL.
- * HIGH-CONCURRENCY OPTIMIZED: Uses multi-row batched inserts to reduce 22 round-trips to just 3 statements.
+ * HIGH-CONCURRENCY BATCHED: Multi-row inserts reduce 22 round-trips to just 3 statements.
  */
 export async function getOrCreateTeam(name: string): Promise<{ team: TeamState; created: boolean }> {
   const key = norm(name);
@@ -267,9 +265,49 @@ export async function getOrCreateTeam(name: string): Promise<{ team: TeamState; 
     ON CONFLICT (team_name, door_number) DO NOTHING
   `;
 
-  const createdTeam = await getTeam(key);
-  if (!createdTeam) throw new Error("Failed to create team in database");
-  return { team: createdTeam, created: true };
+  // Instant in-memory construction: avoids redundant SELECT round-trips
+  const initDoors = (roundNum: 1 | 2 | 3): DoorState[] =>
+    Array.from({ length: 6 }, (_, i) => ({
+      doorNumber: (roundNum - 1) * 6 + i + 1,
+      indexInRound: i,
+      solved: false,
+      fragment: "",
+      attempts: 0,
+      solvedAt: null,
+    }));
+
+  const initRound = (roundNum: 1 | 2 | 3): RoundState => ({
+    round: roundNum,
+    doors: initDoors(roundNum),
+    masterKey: false,
+    masterKeyAttempts: 0,
+    startedAt: null,
+    finishedAt: null,
+    masterKeyAt: null,
+    status: "active",
+    elapsedMs: null,
+    elapsedSec: null,
+  });
+
+  const teamObj: TeamState = {
+    team: key,
+    sessionId,
+    created: now,
+    lastSync: now,
+    currentRound: 1,
+    rounds: { 1: initRound(1), 2: initRound(2), 3: initRound(3) },
+    round: 1,
+    doors: initDoors(1),
+    masterKey: false,
+    masterKeyAttempts: 0,
+    startedAt: null,
+    finishedAt: null,
+    masterKeyAt: null,
+    status: "active",
+  };
+
+  syncLegacyFields(teamObj, 1);
+  return { team: teamObj, created: true };
 }
 
 /**
@@ -297,43 +335,43 @@ export async function startRound(name: string): Promise<TeamState> {
 
 /**
  * List all teams (for admin dashboard).
- * HIGH-CONCURRENCY OPTIMIZED: Fetches all teams, rounds, and doors in 3 bulk queries instead of N*3 queries.
+ * HIGH-CONCURRENCY OPTIMIZED: Fetches all teams, rounds, and doors in 3 bulk queries.
  */
 export async function listTeams(): Promise<TeamState[]> {
   const sql = getSql();
-  const [teamRows, roundRows, doorRows, config] = await Promise.all([
-    sql<Array<{
-      team_name: string;
-      session_id: string;
-      created_at: string | number;
-      last_sync: string | number;
-      current_round: number;
-      status: string;
-    }>>`SELECT team_name, session_id, created_at, last_sync, current_round, status FROM teams ORDER BY created_at ASC`,
-    sql<Array<{
-      team_name: string;
-      round_number: number;
-      status: string;
-      started_at: string | number | null;
-      finished_at: string | number | null;
-      master_key_at: string | number | null;
-      master_key: boolean;
-      master_key_attempts: number;
-      elapsed_ms: string | number | null;
-    }>>`SELECT team_name, round_number, status, started_at, finished_at, master_key_at, master_key, master_key_attempts, elapsed_ms FROM round_states ORDER BY round_number ASC`,
-    sql<Array<{
-      team_name: string;
-      door_number: number;
-      round_number: number;
-      index_in_round: number;
-      solved: boolean;
-      fragment: string;
-      attempts: number;
-      solved_at: string | number | null;
-    }>>`SELECT team_name, door_number, round_number, index_in_round, solved, fragment, attempts, solved_at FROM door_states ORDER BY door_number ASC`,
-    getEventConfig()
-  ]);
+  const teamRows = await sql<Array<{
+    team_name: string;
+    session_id: string;
+    created_at: string | number;
+    last_sync: string | number;
+    current_round: number;
+    status: string;
+  }>>`SELECT team_name, session_id, created_at, last_sync, current_round, status FROM teams ORDER BY created_at ASC`;
 
+  const roundRows = await sql<Array<{
+    team_name: string;
+    round_number: number;
+    status: string;
+    started_at: string | number | null;
+    finished_at: string | number | null;
+    master_key_at: string | number | null;
+    master_key: boolean;
+    master_key_attempts: number;
+    elapsed_ms: string | number | null;
+  }>>`SELECT team_name, round_number, status, started_at, finished_at, master_key_at, master_key, master_key_attempts, elapsed_ms FROM round_states ORDER BY round_number ASC`;
+
+  const doorRows = await sql<Array<{
+    team_name: string;
+    door_number: number;
+    round_number: number;
+    index_in_round: number;
+    solved: boolean;
+    fragment: string;
+    attempts: number;
+    solved_at: string | number | null;
+  }>>`SELECT team_name, door_number, round_number, index_in_round, solved, fragment, attempts, solved_at FROM door_states ORDER BY door_number ASC`;
+
+  const config = await getEventConfig();
   const activeRound = (calculateActiveRound(config.eventStartTime) || 1) as 1 | 2 | 3;
 
   const doorsByTeam: Record<string, Record<number, DoorState[]>> = {};
