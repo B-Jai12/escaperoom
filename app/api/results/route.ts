@@ -1,5 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import { completedTeams, getTeam, setStatus } from "@/lib/store";
+import { requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const authErr = requireAdmin(req);
+  if (authErr) return authErr;
+
   try {
     const body = await req.json().catch(() => null);
     if (!body || typeof body.team !== "string") {

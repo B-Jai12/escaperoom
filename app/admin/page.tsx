@@ -101,16 +101,16 @@ function ClockCard({ sched }: { sched: EventSchedule }) {
         <Stat label="ELAPSED" value={fmtSec(sched.roundElapsed)} color="#94a3b8" />
       </div>
       <div style={{ marginTop: 10, fontSize: 10, color: "#475569", fontFamily: "monospace", lineHeight: 1.8 }}>
-        <b style={{ color: "#64748b" }}>R1:</b> {fmtTs(sched.round1Start)} → {fmtTs(sched.round1End)}&emsp;
-        <b style={{ color: "#64748b" }}>R2:</b> {fmtTs(sched.round2Start)} → {fmtTs(sched.round2End)}&emsp;
-        <b style={{ color: "#64748b" }}>R3:</b> {fmtTs(sched.round3Start)} → {fmtTs(sched.round3End)}
+        <b style={{ color: "#64748b" }}>R1:</b> {fmtTs(sched.round1Start)} - {fmtTs(sched.round1End)}&emsp;
+        <b style={{ color: "#64748b" }}>R2:</b> {fmtTs(sched.round2Start)} - {fmtTs(sched.round2End)}&emsp;
+        <b style={{ color: "#64748b" }}>R3:</b> {fmtTs(sched.round3Start)} - {fmtTs(sched.round3End)}
         <br />Event start: {fmtTs(sched.eventStartTime)} &nbsp;|&nbsp; End: {fmtTs(sched.eventEnd)}
       </div>
     </div>
   );
 }
 
-function ClockControls({ onDone }: { onDone: () => void }) {
+function ClockControls({ adminKey, onDone }: { adminKey: string; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -118,12 +118,20 @@ function ClockControls({ onDone }: { onDone: () => void }) {
     setBusy(true); setMsg("");
     try {
       const r = await fetch("/api/admin/clock", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey,
+        },
         body: JSON.stringify(payload),
       });
       const d = await r.json();
-      setMsg(d.error ? `ERROR: ${d.error}` : `OK — Round ${d.activeRound ?? "none"} active, left: ${fmtSec(d.roundTimeLeft)}`);
-      onDone();
+      if (!r.ok) {
+        setMsg(`ERROR ${r.status}: ${d.error || "Action failed"}`);
+      } else {
+        setMsg(d.error ? `ERROR: ${d.error}` : `OK - Round ${d.activeRound ?? "none"} active, left: ${fmtSec(d.roundTimeLeft)}`);
+        onDone();
+      }
     } catch (e: any) { setMsg(`FAIL: ${e?.message}`); }
     finally { setBusy(false); }
   };
@@ -135,20 +143,21 @@ function ClockControls({ onDone }: { onDone: () => void }) {
       border: `1px solid ${danger ? "rgba(239,68,68,0.45)" : "rgba(214,160,48,0.35)"}`,
       color: danger ? "#ef4444" : "#d6a030", fontFamily: "monospace", fontSize: 11,
       letterSpacing: 1, opacity: busy ? 0.6 : 1, transition: "opacity 0.1s",
-    }}>{busy ? "…" : label}</button>
+    }}>{busy ? "..." : label}</button>
   );
 
   return (
     <div style={card}>
-      <div style={cardHead}>CLOCK CONTROLS</div>
+      <div style={cardHead}>CLOCK CONTROLS (AUTHENTICATED)</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        <Btn label="▶ START NOW" payload={{ action: "startNow" }} danger />
-        <Btn label="↩ ROUND 1 START" payload={{ action: "jumpRound", setRound: 1 }} />
-        <Btn label="↩ ROUND 2 START" payload={{ action: "jumpRound", setRound: 2 }} />
-        <Btn label="↩ ROUND 3 START" payload={{ action: "jumpRound", setRound: 3 }} />
-        <Btn label="⚡ R1 NEAR-END" payload={{ action: "jumpNearEnd", setRound: 1 }} />
-        <Btn label="⚡ R2 NEAR-END" payload={{ action: "jumpNearEnd", setRound: 2 }} />
-        <Btn label="⚡ R3 NEAR-END" payload={{ action: "jumpNearEnd", setRound: 3 }} />
+        <Btn label="START NOW" payload={{ action: "startNow" }} danger />
+        <Btn label="ROUND 1 START" payload={{ action: "jumpRound", setRound: 1 }} />
+        <Btn label="ROUND 2 START" payload={{ action: "jumpRound", setRound: 2 }} />
+        <Btn label="ROUND 3 START" payload={{ action: "jumpRound", setRound: 3 }} />
+        <Btn label="R1 NEAR-END" payload={{ action: "jumpNearEnd", setRound: 1 }} />
+        <Btn label="R2 NEAR-END" payload={{ action: "jumpNearEnd", setRound: 2 }} />
+        <Btn label="R3 NEAR-END" payload={{ action: "jumpNearEnd", setRound: 3 }} />
+        <Btn label="RESET (NOT STARTED)" payload={{ action: "resetNotStarted" }} danger />
       </div>
       {msg && <div style={{ marginTop: 8, fontFamily: "monospace", fontSize: 11, color: msg.startsWith("OK") ? "#22d3a0" : "#ef4444" }}>{msg}</div>}
     </div>
@@ -190,7 +199,7 @@ function RoundBoard({ teams, round }: { teams: TeamData[]; round: 1 | 2 | 3 }) {
               {entries.map((e, i) => (
                 <tr key={e!.team}>
                   <td style={{ ...tdStyle, color: i === 0 ? "#f59e0b" : "#475569" }}>
-                    {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`}
+                    {i === 0 ? "#1" : i === 1 ? "#2" : i === 2 ? "#3" : `#${i + 1}`}
                   </td>
                   <td style={{ ...tdStyle, color: "#e2e8f0" }}>{e!.team}</td>
                   <td style={{ ...tdStyle, color: "#22d3a0", fontWeight: "bold" }}>{fmtSec(e!.elapsedSec)}</td>
@@ -233,7 +242,7 @@ function TeamsTable({ teams, sched }: { teams: TeamData[]; sched: EventSchedule 
 
   const Th = ({ label, k }: { label: string; k: typeof sortKey }) => (
     <th onClick={() => toggleSort(k)} style={{ ...thStyle, cursor: "pointer", color: sortKey === k ? "#d6a030" : "#64748b" }}>
-      {label}{sortKey === k ? (asc ? " ▲" : " ▼") : ""}
+      {label}{sortKey === k ? (asc ? " ^" : " v") : ""}
     </th>
   );
 
@@ -305,30 +314,151 @@ function TeamsTable({ teams, sched }: { teams: TeamData[]; sched: EventSchedule 
 }
 
 export default function AdminPage() {
+  const [adminKey, setAdminKey] = useState<string>("");
+  const [inputKey, setInputKey] = useState<string>("");
+  const [authError, setAuthError] = useState<string>("");
+  const [isAuthed, setIsAuthed] = useState<boolean>(false);
+
   const [sched, setSched] = useState<EventSchedule | null>(null);
   const [teams, setTeams] = useState<TeamData[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [lastAt, setLastAt] = useState(0);
 
-  const load = useCallback(async () => {
+  // Initialize from session storage
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? sessionStorage.getItem("gauntlet_admin_key") : null;
+    if (saved) {
+      setAdminKey(saved);
+      setIsAuthed(true);
+    }
+  }, []);
+
+  const load = useCallback(async (keyToUse?: string) => {
+    const key = keyToUse || adminKey;
+    if (!key) return;
+
+    setLoading(true);
     try {
-      const r = await fetch("/api/admin/teams");
+      const r = await fetch("/api/admin/teams", {
+        headers: { "x-admin-key": key },
+      });
+      if (r.status === 401) {
+        setIsAuthed(false);
+        setAdminKey("");
+        if (typeof window !== "undefined") sessionStorage.removeItem("gauntlet_admin_key");
+        setAuthError("Invalid Administrator Key. Access Denied.");
+        return;
+      }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       setSched(d.schedule);
       setTeams(d.teams || []);
       setLastAt(Date.now());
       setErr("");
-    } catch (e: any) { setErr(e?.message || "Failed"); }
-    finally { setLoading(false); }
-  }, []);
+      setIsAuthed(true);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to load admin data");
+    } finally {
+      setLoading(false);
+    }
+  }, [adminKey]);
 
-  useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const iv = setInterval(load, 5000);
-    return () => clearInterval(iv);
-  }, [load]);
+    if (isAuthed && adminKey) {
+      load(adminKey);
+      const iv = setInterval(() => load(adminKey), 5000);
+      return () => clearInterval(iv);
+    }
+  }, [isAuthed, adminKey, load]);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputKey.trim()) return;
+    const key = inputKey.trim();
+    setAuthError("");
+    load(key).then(() => {
+      setAdminKey(key);
+      if (typeof window !== "undefined") sessionStorage.setItem("gauntlet_admin_key", key);
+    });
+  };
+
+  const handleLogout = () => {
+    setAdminKey("");
+    setIsAuthed(false);
+    setInputKey("");
+    if (typeof window !== "undefined") sessionStorage.removeItem("gauntlet_admin_key");
+  };
+
+  if (!isAuthed) {
+    return (
+      <div style={{
+        minHeight: "100vh", background: "#060604", color: "#cbd5e1",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "monospace", padding: 20,
+      }}>
+        <div style={{
+          maxWidth: 420, width: "100%", background: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(214,160,48,0.3)", borderRadius: 8, padding: "28px 24px",
+          boxShadow: "0 0 30px rgba(0,0,0,0.8)",
+        }}>
+          <div style={{ fontSize: 13, color: "#d6a030", letterSpacing: 3, fontWeight: "bold", marginBottom: 6, textAlign: "center" }}>
+            GAUNTLET ADMIN CONSOLE
+          </div>
+          <div style={{ fontSize: 10, color: "#64748b", letterSpacing: 2, marginBottom: 20, textAlign: "center" }}>
+            SECURITY CLEARANCE REQUIRED
+          </div>
+
+          <form onSubmit={handleLogin}>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 10, color: "#94a3b8", marginBottom: 6, letterSpacing: 1 }}>
+                ADMINISTRATOR ACCESS KEY:
+              </label>
+              <input
+                type="password"
+                value={inputKey}
+                onChange={(e) => setInputKey(e.target.value)}
+                placeholder="Enter secret key..."
+                style={{
+                  width: "100%", padding: "10px 12px", background: "rgba(0,0,0,0.6)",
+                  border: "1px solid rgba(255,255,255,0.15)", borderRadius: 4,
+                  color: "#f8fafc", fontFamily: "monospace", fontSize: 13, outline: "none",
+                  boxSizing: "border-box",
+                }}
+                autoFocus
+              />
+            </div>
+
+            {authError && (
+              <div style={{
+                background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)",
+                color: "#ef4444", fontSize: 11, padding: "8px 12px", borderRadius: 4, marginBottom: 16,
+              }}>
+                {authError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              style={{
+                width: "100%", padding: "10px", background: "rgba(214,160,48,0.15)",
+                border: "1px solid rgba(214,160,48,0.5)", borderRadius: 4,
+                color: "#d6a030", fontFamily: "monospace", fontSize: 12,
+                letterSpacing: 2, fontWeight: "bold", cursor: loading ? "wait" : "pointer",
+              }}
+            >
+              {loading ? "VERIFYING..." : "AUTHENTICATE"}
+            </button>
+          </form>
+
+          <div style={{ fontSize: 9, color: "#334155", textAlign: "center", marginTop: 20, letterSpacing: 1 }}>
+            UNAUTHORIZED ACCESS ATTEMPTS ARE LOGGED AND REJECTED (HTTP 401)
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: "#060604", color: "#cbd5e1", padding: "24px 28px", fontFamily: "monospace" }}>
@@ -336,19 +466,24 @@ export default function AdminPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: "bold", letterSpacing: 4, color: "#d6a030" }}>
-            ⚙ CODEBREAKER ADMIN
+            CODEBREAKER ADMIN
           </div>
           <div style={{ fontSize: 10, color: "#475569", letterSpacing: 2, marginTop: 2 }}>
-            THE CODEBREAKER&apos;S GAUNTLET — EVENT CONTROL CENTER — localhost:3001
+            THE CODEBREAKER&apos;S GAUNTLET - AUTHORIZED EVENT CONTROL CENTER
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {lastAt > 0 && <span style={{ fontSize: 10, color: "#334155" }}>Updated {fmtTs(lastAt)}</span>}
-          <button onClick={load} style={{
+          <button onClick={() => load(adminKey)} style={{
             padding: "6px 12px", background: "rgba(214,160,48,0.1)",
             border: "1px solid rgba(214,160,48,0.35)", borderRadius: 4,
             color: "#d6a030", fontSize: 10, cursor: "pointer", letterSpacing: 1,
-          }}>↺ REFRESH</button>
+          }}>REFRESH</button>
+          <button onClick={handleLogout} style={{
+            padding: "6px 12px", background: "rgba(239,68,68,0.1)",
+            border: "1px solid rgba(239,68,68,0.35)", borderRadius: 4,
+            color: "#ef4444", fontSize: 10, cursor: "pointer", letterSpacing: 1,
+          }}>LOCK CONSOLE</button>
         </div>
       </div>
 
@@ -359,12 +494,12 @@ export default function AdminPage() {
         }}>ERROR: {err}</div>
       )}
 
-      {loading ? (
-        <div style={{ color: "#334155", fontSize: 13 }}>LOADING EVENT DATA…</div>
+      {loading && !sched ? (
+        <div style={{ color: "#334155", fontSize: 13 }}>LOADING EVENT DATA...</div>
       ) : (
         <>
           {sched && <ClockCard sched={sched} />}
-          <ClockControls onDone={load} />
+          <ClockControls adminKey={adminKey} onDone={() => load(adminKey)} />
           {sched && teams.length > 0 && <TeamsTable teams={teams} sched={sched} />}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <RoundBoard teams={teams} round={1} />
@@ -372,7 +507,7 @@ export default function AdminPage() {
             <RoundBoard teams={teams} round={3} />
           </div>
           <div style={{ textAlign: "center", fontSize: 10, color: "#1e293b", marginTop: 12 }}>
-            AUTO-REFRESHES EVERY 5s · SUPABASE POSTGRESQL CONNECTED  ZERO LOCAL FILE PERSISTENCE
+            AUTO-REFRESHES EVERY 5s - SUPABASE POSTGRESQL CONNECTED - AUTHENTICATED
           </div>
         </>
       )}

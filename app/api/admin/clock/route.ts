@@ -1,9 +1,13 @@
 ﻿import { NextResponse } from "next/server";
 import { getEventSchedule, setEventStartTime, resetEventClock, ROUND_DURATION_SEC } from "@/lib/eventClock";
+import { requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const authErr = requireAdmin(req);
+  if (authErr) return authErr;
+
   try {
     const schedule = await getEventSchedule();
     return NextResponse.json(schedule);
@@ -13,6 +17,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const authErr = requireAdmin(req);
+  if (authErr) return authErr;
+
   try {
     const body = await req.json();
     const { action, elapsedSec, startTime, setRound } = body ?? {};
@@ -31,6 +38,13 @@ export async function POST(req: Request) {
       // Jump clock to 15s before round ends for transition testing!
       const offsetSec = setRound * ROUND_DURATION_SEC - 15;
       await resetEventClock(offsetSec);
+    } else if (action === "resetNotStarted") {
+      // Reset clock to not_started for clean event setup
+      const config = await setEventStartTime(Date.now());
+      // Directly mark not_started in DB
+      const getSql = (await import("@/lib/db")).default;
+      const sql = getSql();
+      await sql`UPDATE events SET event_status = 'not_started' WHERE id = 'default'`;
     }
 
     const schedule = await getEventSchedule();

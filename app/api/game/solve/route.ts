@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { solveDoor, getOrCreateTeam } from "@/lib/store";
 import { getActiveRound } from "@/lib/eventClock";
 import { ALL_PUZZLES } from "@/app/puzzleData";
@@ -6,6 +6,9 @@ import { ALL_PUZZLES } from "@/app/puzzleData";
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const t0 = performance.now();
+  let dbMs = 0;
+
   try {
     const body = await req.json();
     const { team, door, fragment, answer } = body ?? {};
@@ -17,7 +20,6 @@ export async function POST(req: Request) {
     // Determine target puzzle
     let puzzle = ALL_PUZZLES.find((p) => p.doorNumber === door || p.id === door);
     if (!puzzle && door >= 0 && door < 6) {
-      // Relative index within active round
       const active = (await getActiveRound()) || 1;
       const offset = (active - 1) * 6;
       puzzle = ALL_PUZZLES[offset + door];
@@ -39,6 +41,7 @@ export async function POST(req: Request) {
     }
 
     const fragToAward = fragment || puzzle.fragment;
+    const tDb0 = performance.now();
     let result = await solveDoor(team, puzzle.doorNumber, fragToAward);
 
     if (!result) {
@@ -46,6 +49,8 @@ export async function POST(req: Request) {
       await getOrCreateTeam(team);
       result = await solveDoor(team, puzzle.doorNumber, fragToAward);
     }
+    dbMs = performance.now() - tDb0;
+    const totalMs = performance.now() - t0;
 
     if (!result) {
       return NextResponse.json({ error: "Team not found" }, { status: 404 });
@@ -55,13 +60,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: result.error }, { status: 403 });
     }
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       accepted: true,
       newlySolved: result.newlySolved,
       doorNumber: puzzle.doorNumber,
       fragment: fragToAward,
       team: result.team,
+      _timing: { totalMs: Number(totalMs.toFixed(1)), dbMs: Number(dbMs.toFixed(1)) },
     });
+    res.headers.set("Server-Timing", `db;dur=${dbMs.toFixed(1)}, total;dur=${totalMs.toFixed(1)}`);
+    return res;
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "Internal error" }, { status: 500 });
   }

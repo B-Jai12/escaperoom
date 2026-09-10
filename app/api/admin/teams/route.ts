@@ -1,10 +1,14 @@
 ﻿import { NextResponse } from "next/server";
 import { listTeams } from "@/lib/store";
 import { getEventSchedule } from "@/lib/eventClock";
+import { requireAdmin } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const authErr = requireAdmin(req);
+  if (authErr) return authErr;
+
   try {
     const teams = await listTeams();
     const schedule = await getEventSchedule();

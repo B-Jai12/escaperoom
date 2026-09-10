@@ -1,5 +1,4 @@
 ﻿import getSql from "./db";
-import { ensureSchema } from "./schema";
 
 export const ROUND_DURATION_SEC = 45 * 60; // 2700 seconds (45 min)
 export const TOTAL_ROUNDS = 3;
@@ -30,10 +29,9 @@ export type EventSchedule = {
 
 /**
  * Fetch authoritative event configuration directly from PostgreSQL.
- * Automatically runs ensureSchema() on startup if tables do not exist yet.
+ * PURE DML HOT PATH: No DDL or schema inspection here.
  */
 export async function getEventConfig(): Promise<EventConfig> {
-  await ensureSchema();
   const sql = getSql();
   const rows = await sql<Array<{
     event_start_time: string | number;
@@ -82,7 +80,6 @@ export async function getEventConfig(): Promise<EventConfig> {
  * Marks status as 'active'.
  */
 export async function setEventStartTime(startTime: number): Promise<EventConfig> {
-  await ensureSchema();
   const sql = getSql();
   const rows = await sql<Array<{
     event_start_time: string | number;
