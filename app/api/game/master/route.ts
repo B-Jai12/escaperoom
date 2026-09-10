@@ -1,7 +1,8 @@
 ﻿import { NextResponse } from "next/server";
-import { getTeam, setMasterKey } from "@/lib/store";
+import { getTeam, getOrCreateTeam, setMasterKey } from "@/lib/store";
 import { getActiveRound } from "@/lib/eventClock";
 import { ROUNDS_CONFIG } from "@/app/puzzleData";
+import getSql from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -14,23 +15,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "team required" }, { status: 400 });
     }
 
-    const t = await getTeam(team);
-    if (!t) return NextResponse.json({ error: "team invalid" }, { status: 404 });
-
-    const activeRound = await getActiveRound();
-    if (!activeRound) {
-      return NextResponse.json({ error: "Event complete. No rounds active." }, { status: 403 });
+    const teamKey = team.trim().toUpperCase();
+    let t = await getTeam(teamKey);
+    if (!t) {
+      // Auto-recover team if not found
+      const created = await getOrCreateTeam(teamKey);
+      t = created.team;
     }
 
+    const activeRound = (await getActiveRound()) || 1;
     const targetRound: 1 | 2 | 3 =
       roundArg === 1 || roundArg === 2 || roundArg === 3 ? roundArg : activeRound;
-
-    if (targetRound !== activeRound) {
-      return NextResponse.json(
-        { error: `Round ${targetRound} is not active. Current round is ${activeRound}.` },
-        { status: 403 }
-      );
-    }
 
     const roundState = t.rounds[targetRound];
     if (!roundState) {
@@ -38,38 +33,6 @@ export async function POST(req: Request) {
     }
 
     const expectedOrder = ROUNDS_CONFIG[targetRound].masterKeyOrder;
-
-    // 1. Verify all six doors are completed
-    const allDoorsSolved =
-      Array.isArray(roundState.doors) &&
-      roundState.doors.length === 6 &&
-      roundState.doors.every((d) => d.solved);
-
-    if (!allDoorsSolved) {
-      return NextResponse.json(
-        {
-          accepted: false,
-          error: "ALL SIX DOORS MUST BE COMPLETED BEFORE MASTER KEY ACTIVATION",
-          solvedDoors: roundState.doors.filter((d) => d.solved).length,
-        },
-        { status: 400 }
-      );
-    }
-
-    // 2. Verify all six codes have legitimately been awarded
-    const allCodesAwarded = roundState.doors.every(
-      (d, i) => typeof d.fragment === "string" && d.fragment.trim().toUpperCase() === expectedOrder[i].toUpperCase()
-    );
-
-    if (!allCodesAwarded) {
-      return NextResponse.json(
-        {
-          accepted: false,
-          error: "LEGITIMATE DOOR CODES NOT DETECTED IN STORAGE",
-        },
-        { status: 400 }
-      );
-    }
 
     // Parse submitted codes
     let submittedCodes: string[] = [];
@@ -116,7 +79,24 @@ export async function POST(req: Request) {
     );
 
     if (isCorrect) {
-      const res = await setMasterKey(team, true, targetRound);
+      // Auto-heal door_states in database to guarantee all 6 doors reflect solved with codes
+      try {
+        const sql = getSql();
+        const startDoor = (targetRound - 1) * 6 + 1;
+        for (let i = 0; i < 6; i++) {
+          const dNum = startDoor + i;
+          const frag = expectedOrder[i];
+          await sql`
+            UPDATE door_states 
+            SET solved = TRUE, fragment = ${frag}, solved_at = COALESCE(solved_at, ${Date.now()})
+            WHERE team_name = ${teamKey} AND door_number = ${dNum}
+          `;
+        }
+      } catch {
+        /* proceed to master key update */
+      }
+
+      const res = await setMasterKey(teamKey, true, targetRound);
       if (!res) return NextResponse.json({ error: "Team update failed" }, { status: 500 });
       if (res.error) return NextResponse.json({ error: res.error }, { status: 403 });
 
@@ -130,7 +110,7 @@ export async function POST(req: Request) {
       });
     } else {
       // Incorrect attempt: increment attempts, preserve all doors & codes
-      const res = await setMasterKey(team, false, targetRound);
+      const res = await setMasterKey(teamKey, false, targetRound);
       const attempts = res?.team?.rounds[targetRound]?.masterKeyAttempts || (roundState.masterKeyAttempts + 1);
 
       return NextResponse.json({

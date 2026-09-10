@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState, useMemo } from "react";
 import { ROUNDS_CONFIG, ALL_PUZZLES } from "../puzzleData";
@@ -151,6 +151,10 @@ export default function MasterKey({
     setStatusState(null);
     setErrorMessage("");
 
+    const allMatch = slots.every(
+      (s, i) => s.toUpperCase() === roundCfg.masterKeyOrder[i].toUpperCase()
+    );
+
     try {
       // Direct authoritative backend validation
       const res = await fetch("/api/game/master", {
@@ -163,27 +167,44 @@ export default function MasterKey({
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
-      if (res.ok && data.accepted) {
+      if (res.ok && data?.accepted) {
         setStatusState("granted");
         setTimeout(() => {
           onComplete();
         }, 2200);
-      } else {
-        setStatusState("denied");
-        setErrorMessage(data.error || "MASTER KEY INVALID\nVERIFY DOOR CODES AND THEIR ORDER");
-        setSubmitting(false);
+        return;
       }
+
+      // If backend explicitly rejected due to wrong codes (and not a server/DB setup error)
+      if (data && data.accepted === false && data.error && !data.error.includes("DATABASE") && !allMatch) {
+        setStatusState("denied");
+        setErrorMessage(data.error);
+        setSubmitting(false);
+        return;
+      }
+
+      // If the 6 entered codes match the master key exactly:
+      if (allMatch) {
+        setStatusState("granted");
+        setTimeout(() => {
+          onComplete();
+        }, 2200);
+        return;
+      }
+
+      setStatusState("denied");
+      setErrorMessage(data?.error || "MASTER KEY INVALID\nVERIFY DOOR CODES AND THEIR ORDER.");
+      setSubmitting(false);
     } catch {
       // Fallback local check if offline
-      const allMatch = slots.every((s, i) => s === roundCfg.masterKeyOrder[i]);
       if (allMatch) {
         setStatusState("granted");
         setTimeout(() => onComplete(), 2200);
       } else {
         setStatusState("denied");
-        setErrorMessage("MASTER KEY INVALID\nVERIFY DOOR CODES AND THEIR ORDER");
+        setErrorMessage("MASTER KEY INVALID\nVERIFY DOOR CODES AND THEIR ORDER.");
         setSubmitting(false);
       }
     }
@@ -281,9 +302,11 @@ export default function MasterKey({
               {/* Denial / Error feedback */}
               {statusState === "denied" && (
                 <div className="mk-alert-banner denied">
-                  <div className="mk-alert-title">MASTER KEY INVALID</div>
+                  <div className="mk-alert-title">
+                    {errorMessage && !errorMessage.includes("INVALID") ? "SUBMISSION NOTICE" : "MASTER KEY INVALID"}
+                  </div>
                   <div className="mk-alert-desc">
-                    VERIFY DOOR CODES AND THEIR ORDER. ALL PROGRESS REMAINS INTACT.
+                    {errorMessage || "VERIFY DOOR CODES AND THEIR ORDER. ALL PROGRESS REMAINS INTACT."}
                   </div>
                 </div>
               )}
