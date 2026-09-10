@@ -293,7 +293,7 @@ function HangingBulb({ triggerRef }: { triggerRef: MutableRefObject<number> }) {
         <mesh position={[0, -ROOM.ropeLen * 0.74, 0]}><cylinderGeometry args={[0.014, 0.018, ROOM.ropeLen * 0.48, 8]} /><meshStandardMaterial color="#3f301f" roughness={0.95} /></mesh>
         <mesh position={[0, -ROOM.ropeLen, 0]}><cylinderGeometry args={[0.03, 0.04, 0.05, 12]} /><meshStandardMaterial color="#5a4630" metalness={0.7} roughness={0.4} /></mesh>
         <mesh position={[0, -ROOM.ropeLen - 0.07, 0]} castShadow><sphereGeometry args={[0.065, 20, 16]} /><meshStandardMaterial color="#3a2410" emissive="#ffb454" emissiveIntensity={2.2} roughness={0.25} metalness={0.1} /></mesh>
-        <pointLight ref={light} position={[0, -ROOM.ropeLen - 0.05, 0]} intensity={30} color="#ffb469" distance={9} decay={1.6} castShadow shadow-mapSize={[1024, 1024]} shadow-bias={-0.0004} />
+        <pointLight ref={light} position={[0, -ROOM.ropeLen - 0.05, 0]} intensity={30} color="#ffb469" distance={9} decay={1.6} castShadow shadow-mapSize={[512, 512]} shadow-bias={-0.0004} />
         <sprite position={[0, -ROOM.ropeLen - 0.07, 0]} scale={[0.5, 0.5, 1]}><spriteMaterial ref={glowMat} map={glowTex} transparent opacity={1} depthWrite={false} blending={THREE.AdditiveBlending} /></sprite>
         <mesh position={[0, -ROOM.ropeLen - 0.3, 0]}><cylinderGeometry args={[0.64, 0.1, 1.5, 20, 1, true]} /><meshBasicMaterial ref={coneMat} color="#ffb469" transparent opacity={0.1} depthWrite={false} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} fog={false} /></mesh>
       </group>
@@ -507,7 +507,6 @@ function Director({ fxRef, darkRef, triggerRef, landingPhaseRef, phaseStartRef }
     const phase = landingPhaseRef.current;
     const elapsed = t - phaseStartRef.current;
 
-    if (darkRef.current) darkRef.current.style.opacity = "0";
 
     // ── ROOM: gentle parallax ──
     if (phase === "room" || phase === "lever_ready") {
