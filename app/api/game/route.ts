@@ -62,8 +62,8 @@ export async function POST(req: Request) {
     }
 
     const tDb0 = performance.now();
-    const { team: teamObj } = await getOrCreateTeam(team);
-    if (start) {
+    const { team: teamObj, created } = await getOrCreateTeam(team);
+    if (start && !created) {
       await startRound(team);
     }
     const schedule = await getEventSchedule();
