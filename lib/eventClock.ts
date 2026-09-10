@@ -27,11 +27,23 @@ export type EventSchedule = {
   eventStatus: "not_started" | "active" | "complete";
 };
 
+// High-performance hot-path cache: 3s TTL to eliminate redundant DB roundtrips during gameplay
+let _cachedConfig: { config: EventConfig; expiresAt: number } | null = null;
+
+export function invalidateEventCache() {
+  _cachedConfig = null;
+}
+
 /**
  * Fetch authoritative event configuration directly from PostgreSQL.
- * PURE DML HOT PATH: No DDL or schema inspection here.
+ * Hot path is protected by a 3-second memory cache.
  */
 export async function getEventConfig(): Promise<EventConfig> {
+  const now = Date.now();
+  if (_cachedConfig && _cachedConfig.expiresAt > now) {
+    return _cachedConfig.config;
+  }
+
   const sql = getSql();
   const rows = await sql<Array<{
     event_start_time: string | number;
@@ -46,15 +58,16 @@ export async function getEventConfig(): Promise<EventConfig> {
   `;
 
   if (rows && rows.length > 0) {
-    return {
+    const config: EventConfig = {
       eventStartTime: Number(rows[0].event_start_time),
       roundDurationSec: rows[0].round_duration_sec || ROUND_DURATION_SEC,
       totalRounds: rows[0].total_rounds || TOTAL_ROUNDS,
       eventStatus: (rows[0].event_status as any) || "active",
     };
+    _cachedConfig = { config, expiresAt: now + 3000 };
+    return config;
   }
 
-  const now = Date.now();
   const inserted = await sql<Array<{
     event_start_time: string | number;
     round_duration_sec: number;
@@ -67,19 +80,22 @@ export async function getEventConfig(): Promise<EventConfig> {
     RETURNING event_start_time, round_duration_sec, total_rounds, event_status
   `;
 
-  return {
+  const config: EventConfig = {
     eventStartTime: Number(inserted[0].event_start_time),
     roundDurationSec: inserted[0].round_duration_sec || ROUND_DURATION_SEC,
     totalRounds: inserted[0].total_rounds || TOTAL_ROUNDS,
     eventStatus: (inserted[0].event_status as any) || "not_started",
   };
+  _cachedConfig = { config, expiresAt: now + 3000 };
+  return config;
 }
 
 /**
  * Set official event start time in PostgreSQL.
- * Marks status as 'active'.
+ * Marks status as 'active' and invalidates cache immediately.
  */
 export async function setEventStartTime(startTime: number): Promise<EventConfig> {
+  invalidateEventCache();
   const sql = getSql();
   const rows = await sql<Array<{
     event_start_time: string | number;
@@ -94,12 +110,14 @@ export async function setEventStartTime(startTime: number): Promise<EventConfig>
     RETURNING event_start_time, round_duration_sec, total_rounds, event_status
   `;
 
-  return {
+  const config: EventConfig = {
     eventStartTime: Number(rows[0].event_start_time),
     roundDurationSec: rows[0].round_duration_sec,
     totalRounds: rows[0].total_rounds,
     eventStatus: "active",
   };
+  _cachedConfig = { config, expiresAt: Date.now() + 3000 };
+  return config;
 }
 
 /**
