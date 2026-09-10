@@ -1,4 +1,5 @@
 ﻿import getSql from "./db";
+import { ensureSchema } from "./schema";
 
 export const ROUND_DURATION_SEC = 45 * 60; // 2700 seconds (45 min)
 export const TOTAL_ROUNDS = 3;
@@ -8,6 +9,7 @@ export type EventConfig = {
   eventStartTime: number;
   roundDurationSec: number;
   totalRounds: number;
+  eventStatus?: "not_started" | "active" | "complete";
 };
 
 export type EventSchedule = {
@@ -28,16 +30,18 @@ export type EventSchedule = {
 
 /**
  * Fetch authoritative event configuration directly from PostgreSQL.
- * No local file reads.
+ * Automatically runs ensureSchema() on startup if tables do not exist yet.
  */
 export async function getEventConfig(): Promise<EventConfig> {
+  await ensureSchema();
   const sql = getSql();
   const rows = await sql<Array<{
     event_start_time: string | number;
     round_duration_sec: number;
     total_rounds: number;
+    event_status: string;
   }>>`
-    SELECT event_start_time, round_duration_sec, total_rounds 
+    SELECT event_start_time, round_duration_sec, total_rounds, event_status 
     FROM events 
     WHERE id = 'default' 
     LIMIT 1
@@ -48,51 +52,56 @@ export async function getEventConfig(): Promise<EventConfig> {
       eventStartTime: Number(rows[0].event_start_time),
       roundDurationSec: rows[0].round_duration_sec || ROUND_DURATION_SEC,
       totalRounds: rows[0].total_rounds || TOTAL_ROUNDS,
+      eventStatus: (rows[0].event_status as any) || "active",
     };
   }
 
-  // Insert initial default event row if not present
   const now = Date.now();
   const inserted = await sql<Array<{
     event_start_time: string | number;
     round_duration_sec: number;
     total_rounds: number;
+    event_status: string;
   }>>`
     INSERT INTO events (id, event_name, event_status, event_start_time, round_duration_sec, total_rounds)
-    VALUES ('default', 'The Codebreaker''s Gauntlet', 'active', ${now}, ${ROUND_DURATION_SEC}, ${TOTAL_ROUNDS})
+    VALUES ('default', 'The Codebreaker''s Gauntlet', 'not_started', ${now}, ${ROUND_DURATION_SEC}, ${TOTAL_ROUNDS})
     ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
-    RETURNING event_start_time, round_duration_sec, total_rounds
+    RETURNING event_start_time, round_duration_sec, total_rounds, event_status
   `;
 
   return {
     eventStartTime: Number(inserted[0].event_start_time),
     roundDurationSec: inserted[0].round_duration_sec || ROUND_DURATION_SEC,
     totalRounds: inserted[0].total_rounds || TOTAL_ROUNDS,
+    eventStatus: (inserted[0].event_status as any) || "not_started",
   };
 }
 
 /**
  * Set official event start time in PostgreSQL.
- * Authoritative for all serverless instances.
+ * Marks status as 'active'.
  */
 export async function setEventStartTime(startTime: number): Promise<EventConfig> {
+  await ensureSchema();
   const sql = getSql();
   const rows = await sql<Array<{
     event_start_time: string | number;
     round_duration_sec: number;
     total_rounds: number;
+    event_status: string;
   }>>`
     INSERT INTO events (id, event_name, event_status, event_start_time, round_duration_sec, total_rounds)
     VALUES ('default', 'The Codebreaker''s Gauntlet', 'active', ${startTime}, ${ROUND_DURATION_SEC}, ${TOTAL_ROUNDS})
     ON CONFLICT (id) DO UPDATE 
-    SET event_start_time = ${startTime}, updated_at = NOW()
-    RETURNING event_start_time, round_duration_sec, total_rounds
+    SET event_start_time = ${startTime}, event_status = 'active', updated_at = NOW()
+    RETURNING event_start_time, round_duration_sec, total_rounds, event_status
   `;
 
   return {
     eventStartTime: Number(rows[0].event_start_time),
     roundDurationSec: rows[0].round_duration_sec,
     totalRounds: rows[0].total_rounds,
+    eventStatus: "active",
   };
 }
 
@@ -124,7 +133,11 @@ export function calculateActiveRound(eventStartTime: number, now = Date.now()): 
   return null; // event complete
 }
 
-export function calculateSchedule(eventStartTime: number, now = Date.now()): EventSchedule {
+export function calculateSchedule(
+  eventStartTime: number,
+  now = Date.now(),
+  explicitStatus?: "not_started" | "active" | "complete"
+): EventSchedule {
   const round1Start = eventStartTime;
   const round1End = round1Start + ROUND_DURATION_SEC * 1000;
   const round2Start = round1End;
@@ -136,11 +149,11 @@ export function calculateSchedule(eventStartTime: number, now = Date.now()): Eve
   let activeRound: 1 | 2 | 3 | null = null;
   let roundTimeLeft = 0;
   let roundElapsed = 0;
-  let eventStatus: "not_started" | "active" | "complete" = "active";
+  let eventStatus: "not_started" | "active" | "complete" = explicitStatus || "active";
 
   const totalElapsed = (now - eventStartTime) / 1000;
 
-  if (now < eventStartTime) {
+  if (explicitStatus === "not_started" || now < eventStartTime) {
     activeRound = 1;
     roundTimeLeft = ROUND_DURATION_SEC;
     roundElapsed = 0;
@@ -190,14 +203,15 @@ export function calculateSchedule(eventStartTime: number, now = Date.now()): Eve
  * Fetch full event schedule derived from authoritative DB state.
  */
 export async function getEventSchedule(now = Date.now()): Promise<EventSchedule> {
-  const { eventStartTime } = await getEventConfig();
-  return calculateSchedule(eventStartTime, now);
+  const config = await getEventConfig();
+  return calculateSchedule(config.eventStartTime, now, config.eventStatus);
 }
 
 /**
  * Get active round directly from authoritative DB state.
  */
 export async function getActiveRound(now = Date.now()): Promise<1 | 2 | 3 | null> {
-  const { eventStartTime } = await getEventConfig();
-  return calculateActiveRound(eventStartTime, now);
+  const config = await getEventConfig();
+  if (config.eventStatus === "not_started") return 1;
+  return calculateActiveRound(config.eventStartTime, now);
 }
