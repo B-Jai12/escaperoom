@@ -99,11 +99,10 @@ function syncLegacyFields(t: TeamState, activeRound: 1 | 2 | 3 = 1) {
  */
 export async function getFullSyncData(name: string, now = Date.now()) {
   const key = norm(name);
-  if (!key) return null;
 
   return timedQuery(async (sql) => {
     const [row] = await sql<Array<{
-      team_name: string;
+      team_name: string | null;
       event_start_time: string | number;
       event_status: string;
       round_duration_sec: number;
@@ -139,14 +138,13 @@ export async function getFullSyncData(name: string, now = Date.now()) {
           FROM door_states ds
           WHERE ds.team_name = t.team_name
         ) as doors
-      FROM teams t
-      CROSS JOIN (
+      FROM (
         SELECT event_start_time, event_status, round_duration_sec, total_rounds 
         FROM events 
         WHERE id = 'default' 
         LIMIT 1
       ) e
-      WHERE t.team_name = ${key}
+      LEFT JOIN teams t ON t.team_name = ${key || ''}
       LIMIT 1;
     `;
 
@@ -157,33 +155,33 @@ export async function getFullSyncData(name: string, now = Date.now()) {
     const schedule = calculateSchedule(eventStartTime, now, eventStatus);
     const activeRound = schedule.activeRound || 1;
 
-    const roundsList = row.rounds || [];
-    const curRound = roundsList.find((r) => r.round_number === activeRound);
-    const r1 = roundsList.find((r) => r.round_number === 1);
-    const r2 = roundsList.find((r) => r.round_number === 2);
-    const r3 = roundsList.find((r) => r.round_number === 3);
+    let team: any = null;
+    if (row.team_name) {
+      const roundsList = row.rounds || [];
+      const curRound = roundsList.find((r) => r.round_number === activeRound);
+      const r1 = roundsList.find((r) => r.round_number === 1);
+      const r2 = roundsList.find((r) => r.round_number === 2);
+      const r3 = roundsList.find((r) => r.round_number === 3);
 
-    const fmtSummary = (r?: { status: string; elapsed_ms: string | number | null }) => {
-      if (!r) return { status: "active", elapsedMs: null, elapsedSec: null };
-      const ms = r.elapsed_ms ? Number(r.elapsed_ms) : null;
-      return {
-        status: r.status || "active",
-        elapsedMs: ms,
-        elapsedSec: ms ? Math.floor(ms / 1000) : null,
+      const fmtSummary = (r?: { status: string; elapsed_ms: string | number | null }) => {
+        if (!r) return { status: "active", elapsedMs: null, elapsedSec: null };
+        const ms = r.elapsed_ms ? Number(r.elapsed_ms) : null;
+        return {
+          status: r.status || "active",
+          elapsedMs: ms,
+          elapsedSec: ms ? Math.floor(ms / 1000) : null,
+        };
       };
-    };
 
-    const activeDoors = (row.doors || [])
-      .filter((d) => d.round_number === activeRound)
-      .map((d) => ({
-        solved: d.solved,
-        fragment: d.solved ? (d.fragment || "") : "",
-        attempts: d.attempts || 0,
-      }));
+      const activeDoors = (row.doors || [])
+        .filter((d) => d.round_number === activeRound)
+        .map((d) => ({
+          solved: d.solved,
+          fragment: d.solved ? (d.fragment || "") : "",
+          attempts: d.attempts || 0,
+        }));
 
-    return {
-      schedule,
-      team: {
+      team = {
         team: row.team_name,
         currentRound: activeRound,
         doors: activeDoors,
@@ -194,7 +192,12 @@ export async function getFullSyncData(name: string, now = Date.now()) {
           2: fmtSummary(r2),
           3: fmtSummary(r3),
         },
-      },
+      };
+    }
+
+    return {
+      schedule,
+      team,
     };
   });
 }

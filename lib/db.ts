@@ -7,10 +7,11 @@ declare global {
 
 /**
  * Returns the authoritative PostgreSQL client.
- * Serverless optimized:
- * - max: 3 connections per container (each container only executes single queries)
- * - idle_timeout: 5 seconds (releases connection to PgBouncer promptly when idle)
- * - connect_timeout: 10 seconds (fails fast under pooler starvation)
+ * Highly optimized for serverless bursts:
+ * - max: 10 (accommodates concurrent requests sharing a container without pool starvation)
+ * - idle_timeout: 30s (preserves warm connections across 3-5s player sync loops)
+ * - connect_timeout: 15s (prevents premature timeouts during pooler cold-starts)
+ * - prepare: false (strictly required for Supabase Transaction Pooler PgBouncer port 6543)
  */
 export function getSql(): postgres.Sql<{}> {
   const connectionString = process.env.DATABASE_URL;
@@ -23,10 +24,10 @@ export function getSql(): postgres.Sql<{}> {
 
   if (!globalThis._sqlInstance) {
     globalThis._sqlInstance = postgres(connectionString, {
-      max: 3,
-      idle_timeout: 5,
-      connect_timeout: 10,
-      prepare: false, // CRITICAL: required for Supabase Transaction Pooler (PgBouncer port 6543)
+      max: 10,
+      idle_timeout: 30,
+      connect_timeout: 15,
+      prepare: false,
       ssl: { rejectUnauthorized: false },
     });
   }
@@ -41,25 +42,18 @@ export type TimedResult<T> = {
 };
 
 /**
- * Executes a query while measuring exact time spent waiting for a connection checkout
- * vs time spent executing the SQL query on PostgreSQL.
+ * Executes a query with high-precision timing.
+ * Leverages postgres.js non-blocking connection pipelining without exclusive socket locks.
  */
 export async function timedQuery<T>(
   fn: (sql: postgres.Sql<{}>) => Promise<T>
 ): Promise<TimedResult<T>> {
   const rootSql = getSql();
   const t0 = performance.now();
-  const reserved = await rootSql.reserve();
-  const connWaitMs = performance.now() - t0;
+  const data = await fn(rootSql);
+  const sqlExecMs = performance.now() - t0;
 
-  const t1 = performance.now();
-  try {
-    const data = await fn(reserved as unknown as postgres.Sql<{}>);
-    const sqlExecMs = performance.now() - t1;
-    return { data, connWaitMs, sqlExecMs };
-  } finally {
-    reserved.release();
-  }
+  return { data, connWaitMs: 0, sqlExecMs };
 }
 
 export default getSql;

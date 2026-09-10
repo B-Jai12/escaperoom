@@ -9,18 +9,22 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const teamName = searchParams.get("team");
-    const tDb0 = performance.now();
-    const schedule = await getEventSchedule();
 
     if (!teamName) {
+      const tDb0 = performance.now();
+      const schedule = await getEventSchedule();
       const dbMs = performance.now() - tDb0;
       const totalMs = performance.now() - t0;
-      const res = NextResponse.json({ schedule, _timing: { totalMs, dbMs } });
+      const res = NextResponse.json({ schedule, _timing: { totalMs: Number(totalMs.toFixed(1)), dbMs: Number(dbMs.toFixed(1)) } });
       res.headers.set("Server-Timing", `db;dur=${dbMs.toFixed(1)}, total;dur=${totalMs.toFixed(1)}`);
       return res;
     }
 
-    const team = await getTeam(teamName);
+    const tDb0 = performance.now();
+    const [team, schedule] = await Promise.all([
+      getTeam(teamName),
+      getEventSchedule(),
+    ]);
     const dbMs = performance.now() - tDb0;
     const totalMs = performance.now() - t0;
 
