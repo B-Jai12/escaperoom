@@ -1,5 +1,5 @@
-﻿import { NextResponse } from "next/server";
-import { solveDoor } from "@/lib/store";
+import { NextResponse } from "next/server";
+import { solveDoor, getOrCreateTeam } from "@/lib/store";
 import { getActiveRound } from "@/lib/eventClock";
 import { ALL_PUZZLES } from "@/app/puzzleData";
 
@@ -39,7 +39,13 @@ export async function POST(req: Request) {
     }
 
     const fragToAward = fragment || puzzle.fragment;
-    const result = await solveDoor(team, puzzle.doorNumber, fragToAward);
+    let result = await solveDoor(team, puzzle.doorNumber, fragToAward);
+
+    if (!result) {
+      // Resilient auto-recovery: create team if not yet in database
+      await getOrCreateTeam(team);
+      result = await solveDoor(team, puzzle.doorNumber, fragToAward);
+    }
 
     if (!result) {
       return NextResponse.json({ error: "Team not found" }, { status: 404 });

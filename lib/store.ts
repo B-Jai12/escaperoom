@@ -1,4 +1,4 @@
-﻿import getSql from "./db";
+import getSql from "./db";
 import {
   getEventConfig,
   calculateActiveRound,
@@ -94,6 +94,7 @@ function syncLegacyFields(t: TeamState, activeRound: 1 | 2 | 3 = 1) {
 
 /**
  * Get team by name from PostgreSQL.
+ * Optimized with parallel queries to reduce database latency.
  */
 export async function getTeam(name: string): Promise<TeamState | null> {
   const key = norm(name);
@@ -116,36 +117,38 @@ export async function getTeam(name: string): Promise<TeamState | null> {
 
   if (!teamRow) return null;
 
-  const roundRows = await sql<Array<{
-    round_number: number;
-    status: string;
-    started_at: string | number | null;
-    finished_at: string | number | null;
-    master_key_at: string | number | null;
-    master_key: boolean;
-    master_key_attempts: number;
-    elapsed_ms: string | number | null;
-  }>>`
-    SELECT round_number, status, started_at, finished_at, master_key_at, master_key, master_key_attempts, elapsed_ms
-    FROM round_states
-    WHERE team_name = ${key}
-    ORDER BY round_number ASC
-  `;
-
-  const doorRows = await sql<Array<{
-    door_number: number;
-    round_number: number;
-    index_in_round: number;
-    solved: boolean;
-    fragment: string;
-    attempts: number;
-    solved_at: string | number | null;
-  }>>`
-    SELECT door_number, round_number, index_in_round, solved, fragment, attempts, solved_at
-    FROM door_states
-    WHERE team_name = ${key}
-    ORDER BY door_number ASC
-  `;
+  const [roundRows, doorRows, config] = await Promise.all([
+    sql<Array<{
+      round_number: number;
+      status: string;
+      started_at: string | number | null;
+      finished_at: string | number | null;
+      master_key_at: string | number | null;
+      master_key: boolean;
+      master_key_attempts: number;
+      elapsed_ms: string | number | null;
+    }>>`
+      SELECT round_number, status, started_at, finished_at, master_key_at, master_key, master_key_attempts, elapsed_ms
+      FROM round_states
+      WHERE team_name = ${key}
+      ORDER BY round_number ASC
+    `,
+    sql<Array<{
+      door_number: number;
+      round_number: number;
+      index_in_round: number;
+      solved: boolean;
+      fragment: string;
+      attempts: number;
+      solved_at: string | number | null;
+    }>>`
+      SELECT door_number, round_number, index_in_round, solved, fragment, attempts, solved_at
+      FROM door_states
+      WHERE team_name = ${key}
+      ORDER BY door_number ASC
+    `,
+    getEventConfig()
+  ]);
 
   const doorsByRound: Record<number, DoorState[]> = { 1: [], 2: [], 3: [] };
   for (const d of doorRows) {
@@ -179,8 +182,7 @@ export async function getTeam(name: string): Promise<TeamState | null> {
     };
   }
 
-  const { eventStartTime } = await getEventConfig();
-  const activeRound = (calculateActiveRound(eventStartTime) || 1) as 1 | 2 | 3;
+  const activeRound = (calculateActiveRound(config.eventStartTime) || 1) as 1 | 2 | 3;
 
   const teamObj: TeamState = {
     team: teamRow.team_name,
@@ -205,6 +207,7 @@ export async function getTeam(name: string): Promise<TeamState | null> {
 
 /**
  * Find or create a team and initialize all rounds and doors in PostgreSQL.
+ * HIGH-CONCURRENCY OPTIMIZED: Uses multi-row batched inserts to reduce 22 round-trips to just 3 statements.
  */
 export async function getOrCreateTeam(name: string): Promise<{ team: TeamState; created: boolean }> {
   const key = norm(name);
@@ -222,32 +225,47 @@ export async function getOrCreateTeam(name: string): Promise<{ team: TeamState; 
   const now = Date.now();
   const sessionId = (Math.random().toString(36).slice(2) + Date.now().toString(36)).toUpperCase();
 
-  // Create team row
+  // 1. Create team row
   await sql`
     INSERT INTO teams (team_name, session_id, created_at, last_sync, current_round, status)
     VALUES (${key}, ${sessionId}, ${now}, ${now}, 1, 'active')
     ON CONFLICT (team_name) DO UPDATE SET last_sync = ${now}
   `;
 
-  // Create 3 round records
-  for (const r of [1, 2, 3] as const) {
-    await sql`
-      INSERT INTO round_states (team_name, round_number, status, started_at, finished_at, master_key_at, master_key, master_key_attempts, elapsed_ms)
-      VALUES (${key}, ${r}, 'active', NULL, NULL, NULL, FALSE, 0, NULL)
-      ON CONFLICT (team_name, round_number) DO NOTHING
-    `;
-  }
+  // 2. Multi-row batched insert for all 3 rounds in a single query
+  await sql`
+    INSERT INTO round_states (team_name, round_number, status, started_at, finished_at, master_key_at, master_key, master_key_attempts, elapsed_ms)
+    VALUES 
+      (${key}, 1, 'active', NULL, NULL, NULL, FALSE, 0, NULL),
+      (${key}, 2, 'active', NULL, NULL, NULL, FALSE, 0, NULL),
+      (${key}, 3, 'active', NULL, NULL, NULL, FALSE, 0, NULL)
+    ON CONFLICT (team_name, round_number) DO NOTHING
+  `;
 
-  // Create 18 door records
-  for (let d = 1; d <= 18; d++) {
-    const roundNum = Math.floor((d - 1) / 6) + 1;
-    const indexInRound = (d - 1) % 6;
-    await sql`
-      INSERT INTO door_states (team_name, door_number, round_number, index_in_round, solved, fragment, attempts, solved_at)
-      VALUES (${key}, ${d}, ${roundNum}, ${indexInRound}, FALSE, '', 0, NULL)
-      ON CONFLICT (team_name, door_number) DO NOTHING
-    `;
-  }
+  // 3. Multi-row batched insert for all 18 doors in a single query
+  await sql`
+    INSERT INTO door_states (team_name, door_number, round_number, index_in_round, solved, fragment, attempts, solved_at)
+    VALUES 
+      (${key}, 1, 1, 0, FALSE, '', 0, NULL),
+      (${key}, 2, 1, 1, FALSE, '', 0, NULL),
+      (${key}, 3, 1, 2, FALSE, '', 0, NULL),
+      (${key}, 4, 1, 3, FALSE, '', 0, NULL),
+      (${key}, 5, 1, 4, FALSE, '', 0, NULL),
+      (${key}, 6, 1, 5, FALSE, '', 0, NULL),
+      (${key}, 7, 2, 0, FALSE, '', 0, NULL),
+      (${key}, 8, 2, 1, FALSE, '', 0, NULL),
+      (${key}, 9, 2, 2, FALSE, '', 0, NULL),
+      (${key}, 10, 2, 3, FALSE, '', 0, NULL),
+      (${key}, 11, 2, 4, FALSE, '', 0, NULL),
+      (${key}, 12, 2, 5, FALSE, '', 0, NULL),
+      (${key}, 13, 3, 0, FALSE, '', 0, NULL),
+      (${key}, 14, 3, 1, FALSE, '', 0, NULL),
+      (${key}, 15, 3, 2, FALSE, '', 0, NULL),
+      (${key}, 16, 3, 3, FALSE, '', 0, NULL),
+      (${key}, 17, 3, 4, FALSE, '', 0, NULL),
+      (${key}, 18, 3, 5, FALSE, '', 0, NULL)
+    ON CONFLICT (team_name, door_number) DO NOTHING
+  `;
 
   const createdTeam = await getTeam(key);
   if (!createdTeam) throw new Error("Failed to create team in database");
@@ -278,19 +296,111 @@ export async function startRound(name: string): Promise<TeamState> {
 }
 
 /**
- * List all teams (for admin dashboard)
+ * List all teams (for admin dashboard).
+ * HIGH-CONCURRENCY OPTIMIZED: Fetches all teams, rounds, and doors in 3 bulk queries instead of N*3 queries.
  */
 export async function listTeams(): Promise<TeamState[]> {
   const sql = getSql();
-  const teamRows = await sql<Array<{ team_name: string }>>`
-    SELECT team_name FROM teams ORDER BY created_at ASC
-  `;
+  const [teamRows, roundRows, doorRows, config] = await Promise.all([
+    sql<Array<{
+      team_name: string;
+      session_id: string;
+      created_at: string | number;
+      last_sync: string | number;
+      current_round: number;
+      status: string;
+    }>>`SELECT team_name, session_id, created_at, last_sync, current_round, status FROM teams ORDER BY created_at ASC`,
+    sql<Array<{
+      team_name: string;
+      round_number: number;
+      status: string;
+      started_at: string | number | null;
+      finished_at: string | number | null;
+      master_key_at: string | number | null;
+      master_key: boolean;
+      master_key_attempts: number;
+      elapsed_ms: string | number | null;
+    }>>`SELECT team_name, round_number, status, started_at, finished_at, master_key_at, master_key, master_key_attempts, elapsed_ms FROM round_states ORDER BY round_number ASC`,
+    sql<Array<{
+      team_name: string;
+      door_number: number;
+      round_number: number;
+      index_in_round: number;
+      solved: boolean;
+      fragment: string;
+      attempts: number;
+      solved_at: string | number | null;
+    }>>`SELECT team_name, door_number, round_number, index_in_round, solved, fragment, attempts, solved_at FROM door_states ORDER BY door_number ASC`,
+    getEventConfig()
+  ]);
+
+  const activeRound = (calculateActiveRound(config.eventStartTime) || 1) as 1 | 2 | 3;
+
+  const doorsByTeam: Record<string, Record<number, DoorState[]>> = {};
+  for (const d of doorRows) {
+    if (!doorsByTeam[d.team_name]) doorsByTeam[d.team_name] = { 1: [], 2: [], 3: [] };
+    if (doorsByTeam[d.team_name][d.round_number]) {
+      doorsByTeam[d.team_name][d.round_number].push({
+        doorNumber: d.door_number,
+        indexInRound: d.index_in_round,
+        solved: d.solved,
+        fragment: d.fragment || "",
+        attempts: d.attempts,
+        solvedAt: d.solved_at ? Number(d.solved_at) : null,
+      });
+    }
+  }
+
+  const roundsByTeam: Record<string, Record<number, any>> = {};
+  for (const r of roundRows) {
+    if (!roundsByTeam[r.team_name]) roundsByTeam[r.team_name] = {};
+    roundsByTeam[r.team_name][r.round_number] = r;
+  }
 
   const results: TeamState[] = [];
-  for (const r of teamRows) {
-    const t = await getTeam(r.team_name);
-    if (t) results.push(t);
+  for (const tRow of teamRows) {
+    const key = tRow.team_name;
+    const teamDoors = doorsByTeam[key] || { 1: [], 2: [], 3: [] };
+    const teamRounds = roundsByTeam[key] || {};
+
+    const rounds: Record<number, RoundState> = {};
+    for (const rNum of [1, 2, 3] as const) {
+      const rMatch = teamRounds[rNum];
+      const ms = rMatch?.elapsed_ms ? Number(rMatch.elapsed_ms) : null;
+      rounds[rNum] = {
+        round: rNum,
+        doors: teamDoors[rNum] || [],
+        masterKey: rMatch?.master_key ?? false,
+        masterKeyAttempts: rMatch?.master_key_attempts ?? 0,
+        startedAt: rMatch?.started_at ? Number(rMatch.started_at) : null,
+        finishedAt: rMatch?.finished_at ? Number(rMatch.finished_at) : null,
+        masterKeyAt: rMatch?.master_key_at ? Number(rMatch.master_key_at) : null,
+        status: (rMatch?.status as any) || "active",
+        elapsedMs: ms,
+        elapsedSec: ms ? Math.floor(ms / 1000) : null,
+      };
+    }
+
+    const teamObj: TeamState = {
+      team: tRow.team_name,
+      sessionId: tRow.session_id,
+      created: Number(tRow.created_at),
+      lastSync: Number(tRow.last_sync),
+      currentRound: activeRound,
+      rounds: { 1: rounds[1], 2: rounds[2], 3: rounds[3] },
+      round: activeRound,
+      doors: rounds[activeRound]?.doors || [],
+      masterKey: rounds[activeRound]?.masterKey || false,
+      masterKeyAttempts: rounds[activeRound]?.masterKeyAttempts || 0,
+      startedAt: rounds[activeRound]?.startedAt || null,
+      finishedAt: rounds[activeRound]?.finishedAt || null,
+      masterKeyAt: rounds[activeRound]?.masterKeyAt || null,
+      status: rounds[activeRound]?.status || "active",
+    };
+    syncLegacyFields(teamObj, activeRound);
+    results.push(teamObj);
   }
+
   return results;
 }
 
