@@ -7,8 +7,8 @@ declare global {
 
 /**
  * Returns the authoritative PostgreSQL client.
- * Serverless optimized: max: 1 connection per lambda container to maximize pool availability
- * under high concurrency with Supabase Transaction Pooler (port 6543).
+ * Serverless optimized: max: 5 connections per lambda container to safely execute
+ * pipelined Promise.all queries without connection starvation or pooling deadlocks.
  */
 export function getSql(): postgres.Sql<{}> {
   const connectionString = process.env.DATABASE_URL;
@@ -21,9 +21,9 @@ export function getSql(): postgres.Sql<{}> {
 
   if (!globalThis._sqlInstance) {
     globalThis._sqlInstance = postgres(connectionString, {
-      max: 1, // Optimal for serverless: 1 active connection per container
-      idle_timeout: 10,
-      connect_timeout: 10,
+      max: 5,
+      idle_timeout: 15,
+      connect_timeout: 20,
       prepare: false, // CRITICAL: required for Supabase Transaction Pooler (PgBouncer port 6543)
       ssl: { rejectUnauthorized: false }, // required for cloud-hosted PostgreSQL poolers
     });
