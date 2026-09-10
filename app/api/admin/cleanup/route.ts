@@ -19,6 +19,8 @@ export async function POST(req: Request) {
          OR team_name LIKE 'PROD_TEST_%' 
          OR team_name LIKE 'TEST_%'
          OR team_name LIKE 'LOAD_%'
+         OR team_name LIKE 'ALPHA_%'
+         OR team_name LIKE 'AUDIT_%'
       RETURNING team_name;
     `;
 
@@ -51,3 +53,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: err?.message || "Cleanup failed" }, { status: 500 });
   }
 }
+
