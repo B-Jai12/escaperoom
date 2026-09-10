@@ -157,7 +157,7 @@ function ClockControls({ adminKey, onDone }: { adminKey: string; onDone: () => v
         <Btn label="R1 NEAR-END" payload={{ action: "jumpNearEnd", setRound: 1 }} />
         <Btn label="R2 NEAR-END" payload={{ action: "jumpNearEnd", setRound: 2 }} />
         <Btn label="R3 NEAR-END" payload={{ action: "jumpNearEnd", setRound: 3 }} />
-        <Btn label="RESET (NOT STARTED)" payload={{ action: "resetNotStarted" }} danger />
+        <Btn label="RESET (NOT STARTED)" payload={{ action: "resetNotStarted" }} danger />`n        <button onClick={async () => { if (confirm("PURGE ALL TEST TEAMS (GAUNTLET_*, TEST_*)?")) { const r = await fetch("/api/admin/cleanup", { method: "POST", headers: { "x-admin-key": adminKey } }); const d = await r.json(); alert(d.message || d.error); onDone(); } }} style={{ padding: "7px 14px", borderRadius: 4, background: "rgba(239,68,68,0.2)", border: "1px solid rgba(239,68,68,0.5)", color: "#ef4444", fontFamily: "monospace", fontSize: 11, letterSpacing: 1, cursor: "pointer" }}>PURGE TEST DATA</button>
       </div>
       {msg && <div style={{ marginTop: 8, fontFamily: "monospace", fontSize: 11, color: msg.startsWith("OK") ? "#22d3a0" : "#ef4444" }}>{msg}</div>}
     </div>
@@ -514,3 +514,4 @@ export default function AdminPage() {
     </div>
   );
 }
+
