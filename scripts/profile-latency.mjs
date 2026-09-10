@@ -7,10 +7,14 @@ function pct(arr, p) {
   return sorted[Math.max(0, Math.min(sorted.length - 1, idx))];
 }
 
-async function req(url, opts = {}) {
+async function req(url, opts = {}, timeoutMs = 15000) {
   const t0 = performance.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const res = await fetch(url, opts);
+    const res = await fetch(url, { ...opts, signal: controller.signal });
+    clearTimeout(timer);
     const text = await res.text();
     const totalMs = performance.now() - t0;
     const timingHdr = res.headers.get("Server-Timing");
@@ -27,6 +31,7 @@ async function req(url, opts = {}) {
       size: text.length,
     };
   } catch (err) {
+    clearTimeout(timer);
     return {
       status: 0,
       ok: false,
@@ -42,7 +47,14 @@ async function runProfiles() {
   console.log("LATENCY BENCHMARK: COLD vs WARM vs SEQUENTIAL vs CONCURRENT");
   console.log("============================================================");
 
-  // 1. Cold Request (hit a path with random query param to ensure fresh execution)
+  // Setup: Ensure GAUNTLET_T01 exists
+  await req(`${BASE}/api/game`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ team: "GAUNTLET_T01", start: true }),
+  });
+
+  // 1. Cold Request (hit with cache-buster)
   console.log("\n--> 1. Testing COLD Request...");
   const coldRes = await req(`${BASE}/api/game/sync?team=GAUNTLET_T01&_cold=${Date.now()}`);
   console.log(`    Status: ${coldRes.status} | Total: ${coldRes.totalMs.toFixed(1)} ms | DB: ${coldRes.dbMs} ms`);
@@ -90,7 +102,7 @@ async function runProfiles() {
 
   const concurrentResults = await Promise.all(promises);
   const concLatencies = concurrentResults.map((r) => r.totalMs);
-  const concDbLatencies = concurrentResults.map((r) => r.dbMs).filter(Boolean);
+  const concDbLatencies = concurrentResults.map((r) => r.dbMs).filter((x) => x !== null);
   const failed = concurrentResults.filter((r) => !r.ok);
 
   console.log(`    90 Concurrent Requests Results:`);
@@ -109,6 +121,7 @@ async function runProfiles() {
     console.log(`      DB Max: ${Math.max(...concDbLatencies).toFixed(1)} ms`);
     console.log(`      DB p50: ${pct(concDbLatencies, 50).toFixed(1)} ms`);
     console.log(`      DB p95: ${pct(concDbLatencies, 95).toFixed(1)} ms`);
+    console.log(`      DB p99: ${pct(concDbLatencies, 99).toFixed(1)} ms`);
   }
 }
 
