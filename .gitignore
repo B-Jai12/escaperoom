@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Event admin files (answers - do not publish)
+questions-and-answers.txt
