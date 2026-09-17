@@ -1,15 +1,15 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,20,25,30&height=220&section=header&text=Escape%20Room&fontSize=80&fontAlignY=38&desc=The%20Codebreaker%27s%20Gauntlet%20%7C%203D%20Multi-Team%20Cybersecurity%20Competition&descAlignY=60&animation=fadeIn&fontColor=ffffff" width="100%"/>
+
 
 <br/>
 
-[![Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
-[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
-[![Three.js](https://img.shields.io/badge/Three.js-R3F-black?style=for-the-badge&logo=three.js&logoColor=white)](https://threejs.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Supabase-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://supabase.com)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com)
+[[Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
+[[React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
+[[Three.js](https://img.shields.io/badge/Three.js-R3F-black?style=for-the-badge&logo=three.js&logoColor=white)](https://threejs.org)
+[[TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
+[[PostgreSQL](https://img.shields.io/badge/PostgreSQL-Supabase-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://supabase.com)
+[[Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com)
 
 <br/>
 
@@ -18,7 +18,7 @@
 
 <br/>
 
-**[🎮 Game Mechanics](#-gameplay--mechanics) &nbsp;•&nbsp; [🕶️ 3D Spatial Engine](#-%EF%B8%8F-3d-spatial-engine) &nbsp;•&nbsp; [🛠️ Tech Stack](#-technology-stack) &nbsp;•&nbsp; [⚡ Local Development](#-getting-started) &nbsp;•&nbsp; [🕹️ Admin Portal](#%EF%B8%8F-tournament-operations--admin)**
+**[Game Mechanics](#-gameplay--mechanics) &nbsp;•&nbsp; [3D Spatial Engine](#-%EF%B8%8F-3d-spatial-engine) &nbsp;•&nbsp; [Tech Stack](#-technology-stack) &nbsp;•&nbsp; [Local Development](#-getting-started) &nbsp;•&nbsp; [Admin Portal](#%EF%B8%8F-tournament-operations--admin)**
 
 <br/>
 
@@ -26,7 +26,7 @@
 
 ---
 
-## 🔐 What is The Codebreaker's Gauntlet?
+##  What is The Codebreaker's Gauntlet?
 
 Built specifically for high-intensity hackathons, cybersecurity clubs, and competitive technical events, **The Codebreaker's Gauntlet** is a full-featured competition platform that merges spatial 3D navigation with technical puzzle solving.
 
@@ -34,7 +34,7 @@ Teams register simultaneously, race through a timed sequence of cyber vaults, an
 
 ---
 
-## 🎮 Gameplay & Mechanics
+##  Gameplay & Mechanics
 
 ### 1. Progressive Three-Tier Rounds
 - **Round 1 — Infiltration (Easy):** Pattern recognition, substitution ciphers, and security fundamentals.
@@ -52,7 +52,7 @@ Teams register simultaneously, race through a timed sequence of cyber vaults, an
 
 ---
 
-## 🕶️ 3D Spatial Engine
+##  3D Spatial Engine
 
 Rather than static web forms, players explore a first-person 3D cyber corridor built with **Three.js** and **React Three Fiber (`@react-three/fiber`, `@react-three/drei`)**:
 - Interactive terminal nodes that open modal puzzle viewports upon proximity.
@@ -61,7 +61,7 @@ Rather than static web forms, players explore a first-person 3D cyber corridor b
 
 ---
 
-## 🛠️ Technology Stack
+##  Technology Stack
 
 | Layer | Technology | Details |
 |---|---|---|
@@ -75,7 +75,7 @@ Rather than static web forms, players explore a first-person 3D cyber corridor b
 
 ---
 
-## 📁 Repository Structure
+##  Repository Structure
 
 ```
 escaperoom/
@@ -99,7 +99,7 @@ escaperoom/
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 - Node.js 18+ and npm
@@ -139,7 +139,7 @@ Open `http://localhost:3001` in your browser.
 
 ---
 
-## ⚙️ Tournament Operations & Admin
+##  Tournament Operations & Admin
 
 Organizers have access to a dedicated `/admin` control center:
 - **Global Timer Controls:** Start, pause, or fast-forward competition rounds.
@@ -148,7 +148,7 @@ Organizers have access to a dedicated `/admin` control center:
 
 ---
 
-## 👤 Author
+##  Author
 
-**Jaideep Botla** ([@B-Jai12](https://github.com/B-Jai12))  
+**Jaideep Botla** ([B-Jai12](https://github.com/B-Jai12))  
 B.Tech AIML Student & Builder • Crafting interactive 3D web experiences, competitive games, and distributed applications.
