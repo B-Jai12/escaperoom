@@ -150,5 +150,5 @@ Organizers have access to a dedicated `/admin` control center:
 
 ##  Author
 
-**Jaideep Botla** ([B-Jai12](https://github.com/B-Jai12))  
+**Jaideep** ([B-Jai12](https://github.com/B-Jai12))  
 B.Tech AIML Student & Builder • Crafting interactive 3D web experiences, competitive games, and distributed applications.
